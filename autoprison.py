@@ -1,13 +1,13 @@
-"""AutoPrison (riscrittura) per Prison Legacy.
+"""AutoPrison: autoclick and click-sequence recorder for Prison Legacy (clean-room rewrite).
 
-Programma ESTERNO: simula solo mouse e tastiera con SendInput. Non apre, non legge e non
-modifica il processo del gioco (la finestra si trova solo dal titolo). Attivo soltanto
-quando la finestra del gioco e' in primo piano.
+EXTERNAL program: it only simulates mouse and keyboard input (SendInput) and reads screen pixels.
+It never opens, reads or modifies the game process (the window is found by its title only).
+It acts only while the game window is in the foreground.
 
-Uso (come nel manuale): TAB apre il menu, poi:
-  1 autoclick  2 grabar (poi 1-9)  3 reproducir (poi 1-9)  4 velocita' (1 su, 2 giu, 0 esci)
-  5 autopelea simple (/repetir)  6 autopelea doble turno (sequenza 8 e 9 alternate)  0 chiudi menu
-TAB ferma tutto. Le sequenze si salvano subito in autoprison_data.json.
+Usage: TAB opens the menu, then:
+  1 autoclick   2 record (then 1-9)   3 play (then 1-9)   4 speed (1 up, 2 down, 0 exit)
+  5 simple auto-fight (/repeat)   6 double-turn auto-fight (alternates sequences 8 and 9)   0 close menu
+TAB stops everything. Sequences are saved immediately to autoprison_data.json.
 """
 import ctypes, json, os, random, re, sys, threading, time, tkinter as tk
 from ctypes import wintypes
@@ -19,7 +19,7 @@ except Exception:
     u32.SetProcessDPIAware()
 
 HERE = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
-try:  # cartella non scrivibile (es. Program Files): usa il profilo utente
+try:  # folder not writable (e.g. Program Files): use the user profile
     with open(os.path.join(HERE, ".w"), "w"):
         pass
     os.remove(os.path.join(HERE, ".w"))
@@ -134,7 +134,7 @@ class BMIH(ctypes.Structure):
 
 
 def grab(x, y, w, h):
-    """Legge i pixel dello schermo (come uno screenshot, dall'esterno del gioco). Non include il cursore."""
+    """Read screen pixels like a screenshot, from outside the game. The cursor is not included."""
     w, h = max(int(w), 1), max(int(h), 1)
     sdc = u32.GetDC(None)
     mdc = gdi.CreateCompatibleDC(sdc)
@@ -152,7 +152,7 @@ def grab(x, y, w, h):
 
 
 def changed(a, b, min_frac=0.03, tol=30):
-    """True se almeno min_frac dei pixel campionati e' cambiato in modo visibile."""
+    """True if at least min_frac of the sampled pixels changed visibly."""
     if len(a) != len(b):
         return True
     n = hit = 0
@@ -210,7 +210,7 @@ def save(cfg):
     tmp = DATA + ".tmp"
     with open(tmp, "w", encoding="utf8") as f:
         json.dump(cfg, f, indent=1)
-    os.replace(tmp, DATA)  # scrittura atomica: niente sequenze perse se il PC si riavvia
+    os.replace(tmp, DATA)  # atomic write: no sequences lost if the PC restarts
 
 
 # ---------------------------------------------------------------- app
@@ -235,7 +235,7 @@ class App:
                             fg="#ffffff", bg="#0b1220", padx=16, pady=12)
         self.lbl.pack()
         self.ov.update_idletasks()
-        gw = self.ov.winfo_id()  # click-through + non attivabile: non ruba mai il focus al gioco
+        gw = self.ov.winfo_id()  # click-through and non-activating: never steals focus from the game
         hwnd = u32.GetParent(gw) or gw
         ex = u32.GetWindowLongW(hwnd, -20)
         u32.SetWindowLongW(hwnd, -20, ex | 0x80000 | 0x20 | 0x80 | 0x08000000)
@@ -259,17 +259,17 @@ class App:
     def show(self, h):
         x, y, w, hgt = client_rect(h)
         lines = {
-            "MENU": ["AUTOPRISON  [%s = parar]" % self.cfg["hotkey"],
-                     "1 Autoclick On/Off", "2 Grabar", "3 Reproducir", "4 Cambiar velocidad (x%.2f)" % self.cfg["speed"],
-                     "5 Autopelea simple", "6 Autopelea doble turno", "0 Salir del menu"],
-            "REC_SLOT": ["GRABAR: pulsa 1-9 para elegir la secuencia", "0 cancelar"],
-            "REC": ["GRABANDO secuencia %s  (%d clicks)" % (self.rec_slot, len(self.rec)),
-                    "F9 = esperar ventana de dialogo (centro, ej. MAQUINA)",
-                    "F10 = esperar menu junto al cursor",
-                    "%s para terminar y guardar" % self.cfg["hotkey"]],
-            "PLAY_SLOT": ["REPRODUCIR: pulsa 1-9", "0 cancelar"],
-            "SPEED": ["VELOCIDAD x%.2f" % self.cfg["speed"], "1 subir   2 bajar   0 salir"],
-            "RUN": [self.msg, "%s para parar" % self.cfg["hotkey"]],
+            "MENU": ["AUTOPRISON  [%s = stop]" % self.cfg["hotkey"],
+                     "1 Autoclick On/Off", "2 Record", "3 Play", "4 Change speed (x%.2f)" % self.cfg["speed"],
+                     "5 Simple auto-fight", "6 Double-turn auto-fight", "0 Close menu"],
+            "REC_SLOT": ["RECORD: press 1-9 to choose the sequence slot", "0 cancel"],
+            "REC": ["RECORDING sequence %s  (%d clicks)" % (self.rec_slot, len(self.rec)),
+                    "F9 = wait for a dialog window (screen center, e.g. MAQUINA)",
+                    "F10 = wait for a menu next to the cursor",
+                    "%s to finish and save" % self.cfg["hotkey"]],
+            "PLAY_SLOT": ["PLAY: press 1-9", "0 cancel"],
+            "SPEED": ["SPEED x%.2f" % self.cfg["speed"], "1 faster   2 slower   0 exit"],
+            "RUN": [self.msg, "%s to stop" % self.cfg["hotkey"]],
         }.get(self.state, [])
         if self.msg and self.state not in ("RUN",):
             lines = lines + ["", self.msg]
@@ -293,7 +293,7 @@ class App:
                 log("focus=%s state=%s fg=%s game=%s" % (bool(h), self.state, u32.GetForegroundWindow(), find_game()))
             if not h:
                 if self.state != "IDLE":
-                    self.halt("Gioco non in primo piano: fermato")
+                    self.halt("Game not in foreground: stopped")
                 self.ov.withdraw()
                 self.prev = {}
                 return
@@ -341,26 +341,26 @@ class App:
         elif d == 4:
             self.state = "SPEED"
         elif d == 1:
-            self.run("Autoclick activo", self.w_autoclick)
+            self.run("Autoclick running", self.w_autoclick)
         elif d == 5:
-            self.run("Autopelea simple activa (%s)" % s["repeat_command"], self.w_repeat)
+            self.run("Simple auto-fight running (%s)" % s["repeat_command"], self.w_repeat)
         elif d == 6:
-            self.run("Autopelea doble turno (secuencias 8 y 9)", self.w_double)
+            self.run("Double-turn auto-fight (sequences 8 and 9)", self.w_double)
 
     def on_rec_slot(self, d):
         if d == 0:
             self.state = "IDLE"
             return
         self.rec_slot, self.rec, self.rec_t0, self.state = str(d), [], time.time(), "REC"
-        self.prev[LBTN] = self.prev[RBTN] = True  # ignora il click gia' premuto
+        self.prev[LBTN] = self.prev[RBTN] = True  # ignore the click already held down
 
     def on_play_slot(self, d):
         if d == 0:
             self.state = "IDLE"
         elif str(d) not in self.cfg["sequences"]:
-            self.msg = "Secuencia %d vacia" % d
+            self.msg = "Sequence %d is empty" % d
         else:
-            self.run("Reproduciendo secuencia %d" % d, lambda: self.w_play([str(d)]))
+            self.run("Playing sequence %d" % d, lambda: self.w_play([str(d)]))
 
     def on_speed(self, d):
         if d == 1:
@@ -378,16 +378,16 @@ class App:
                 continue
             if self.rec and "wait" not in self.rec[-1]:
                 c = self.rec[-1]
-                if kind == "dialog":  # finestre di dialogo (es. MAQUINA): compaiono al centro dello schermo
+                if kind == "dialog":  # dialog windows (e.g. MAQUINA) appear in the screen center
                     fx, fy, fw, fh = 0.30, 0.46, 0.60, 0.20
-                else:  # menu contestuali: compaiono vicino al clic
+                else:  # context menus appear next to the click
                     fw, fh = 0.16, 0.28
                     fx = round(min(max(c["fx"] - fw / 2, 0), 1 - fw), 5)
                     fy = round(min(max(c["fy"] - fh / 2, 0), 1 - fh), 5)
                 self.rec.append({"dt": 0, "wait": 1, "timeout": 3.0, "fx": fx, "fy": fy, "fw": fw, "fh": fh})
-                self.msg = "Attesa (%s) aggiunta dopo il clic %d" % (kind, len(self.rec) - 1)
+                self.msg = "Wait (%s) added after click %d" % (kind, len(self.rec) - 1)
             else:
-                self.msg = "Fai prima il clic che apre la finestra"
+                self.msg = "Click the thing that opens the window first"
         for vk, name in ((LBTN, "L"), (RBTN, "R")):
             if self.pressed(vk):
                 x, y, w, hh = client_rect(h)
@@ -401,10 +401,10 @@ class App:
         if self.rec:
             self.cfg["sequences"][self.rec_slot] = self.rec
             save(self.cfg)
-            self.msg = "Secuencia %s guardada (%d clicks)" % (self.rec_slot, len(self.rec))
+            self.msg = "Sequence %s saved (%d clicks)" % (self.rec_slot, len(self.rec))
         self.rec = []
 
-    # -- workers (thread): sempre interrotti da stop o dalla perdita del focus
+    # -- workers (thread): always interrupted by stop or by losing focus
     def run(self, msg, fn):
         self.stop.clear()
         self.state, self.msg = "RUN", msg
@@ -446,7 +446,7 @@ class App:
         evs = self.cfg["sequences"].get(slot, [])
         for i, ev in enumerate(evs):
             if "wait" in ev:
-                continue  # gestito insieme al clic precedente
+                continue  # handled together with the previous click
             if not self.wait(self.jit(ev["dt"])):
                 return False
             h = game_focused()
@@ -471,10 +471,10 @@ class App:
                 if not self.alive():
                     return False
                 if ok:
-                    if not self.wait(self.jit(0.08)):  # il menu si e' aperto: breve pausa, poi si prosegue
+                    if not self.wait(self.jit(0.08)):  # window opened: short pause, then continue
                         return False
                     break
-                log("menu non apparso dopo il clic %d (tentativo %d)" % (i, attempt))
+                log("window did not appear after click %d (attempt %d)" % (i, attempt))
         return True
 
     def w_play(self, slots):
@@ -488,7 +488,7 @@ class App:
     def w_double(self):
         missing = [s for s in ("8", "9") if s not in self.cfg["sequences"]]
         if missing:
-            self.msg = "Graba prima las secuencias 8 (turno 1) y 9 (turno 2)"
+            self.msg = "Record sequences 8 (turn 1) and 9 (turn 2) first"
             return
         self.w_play(["8", "9"])
 
@@ -498,5 +498,5 @@ class App:
 
 
 if __name__ == "__main__":
-    print("AutoPrison attivo. Chiudi questa finestra per uscire (le sequenze sono gia' salvate).")
+    print("AutoPrison is running. Close this window to quit (sequences are already saved).")
     App().loop()

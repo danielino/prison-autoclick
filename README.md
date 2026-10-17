@@ -1,48 +1,49 @@
 # AutoPrison
 
-Autoclick y grabador de secuencias para **Prison Legacy**, inspirado en el AutoPrisión DX de MoleDJ para La Prisión. Reescrito desde cero.
-Programa externo: solo simula ratón y teclado (SendInput) y lee pixeles de la pantalla. No abre, no lee ni modifica el proceso del juego. Proyecto no oficial, sin relación con los responsables del juego.
+Autoclicker and click-sequence recorder for **Prison Legacy**, inspired by MoleDJ's AutoPrisión DX for La Prisión. Written from scratch.
 
-> Úsalo bajo tu responsabilidad. Comprueba las normas actuales del juego sobre automatización: la autorización del AutoPrisión original se refería a La Prisión, no a Prison Legacy.
+It is an external program: it only simulates mouse and keyboard input (SendInput) and reads screen pixels. It does not open, read or modify the game process. Unofficial project, not affiliated with the game's owners.
 
-## Uso
+> Use at your own risk. Check the game's current rules on automation: the permission given to the original AutoPrisión applied to La Prisión, not to Prison Legacy.
 
-Descarga `AutoPrison.exe` de [Releases](../../releases), ejecútalo (con tu usuario normal, igual que el juego, no como administrador) y entra al juego. Con el juego en primer plano, **TAB** abre el menú:
+## Usage
 
-| Tecla | Acción |
+Download `AutoPrison.exe` from [Releases](../../releases), run it as your normal user (same as the game, not as administrator) and enter the game. With the game window in the foreground, **TAB** opens the menu:
+
+| Key | Action |
 |---|---|
-| 1 | Autoclick en la posición del cursor |
-| 2 + 1-9 | Grabar secuencia en ese hueco |
-| 3 + 1-9 | Reproducir secuencia (en bucle) |
-| 4 | Velocidad (1 sube, 2 baja, 0 sale) |
-| 5 | Autopelea simple (`/repetir` cada pocos segundos) |
-| 6 | Autopelea doble turno: alterna las secuencias 8 y 9 |
-| 0 | Cerrar el menú |
+| 1 | Autoclick at the cursor position |
+| 2, then 1-9 | Record a sequence into that slot |
+| 3, then 1-9 | Play a sequence (looped) |
+| 4 | Speed (1 faster, 2 slower, 0 exit) |
+| 5 | Simple auto-fight (sends `/repetir` every few seconds) |
+| 6 | Double-turn auto-fight: alternates sequences 8 and 9 |
+| 0 | Close the menu |
 
-**TAB** vuelve a pulsarse para parar o para terminar de grabar. Todo se detiene si el juego pierde el foco.
+Press **TAB** again to stop or to finish recording. Everything stops if the game loses focus.
 
-### Esperar a una ventana al grabar
+### Waiting for a window while recording
 
-Mientras grabas, justo después del clic que abre una ventana:
+While recording, right after the click that opens a window:
 
-- **F9**: ventana de diálogo en el centro (p. ej. "MÁQUINA: ¿Echas el dinero?").
-- **F10**: menú junto al cursor.
+- **F9**: dialog window in the screen center (e.g. "MÁQUINA: ¿Echas el dinero?").
+- **F10**: menu next to the cursor.
 
-Al reproducir, el programa espera a que esa zona cambie antes de seguir. Si no aparece en 3 s, repite el clic una vez.
+When playing back, the program waits for that screen area to change before continuing. If nothing appears within 3 s it repeats the click once.
 
-## Configuración
+## Configuration
 
-`autoprison_data.json`, junto al exe (o en `%APPDATA%\AutoPrison` si la carpeta no es escribible): `hotkey` (`TAB`, `F8`...), `speed`, `jitter` (variación aleatoria de tiempos, 0.2 = ±20 %), `repeat_command`, etc. Las secuencias se guardan al instante. `autoprison.log` ayuda a diagnosticar.
+`autoprison_data.json`, next to the exe (or in `%APPDATA%\AutoPrison` if the folder is not writable): `hotkey` (`TAB`, `F8`...), `speed`, `jitter` (random timing variation, 0.2 = ±20%), `repeat_command` (use `/repeat` on an English client), etc. Sequences are saved instantly. `autoprison.log` helps with diagnostics.
 
-## Compilar
+## Build
 
 ```
 python autoprison.py
 pip install pyinstaller && pyinstaller --onefile --console --name AutoPrison autoprison.py
 ```
 
-Las releases las genera GitHub Actions al subir una etiqueta `v*` (`git tag v1.0.0 && git push --tags`), junto con el hash SHA-256 del exe.
+Releases are built by GitHub Actions when a `v*` tag is pushed (`git tag v1.0.1 && git push --tags`), together with the SHA-256 hash of the exe.
 
 ## Antivirus
 
-Los exe de PyInstaller que simulan entrada a veces dan falsos positivos. Por eso el exe se construye en público desde este código; compara el SHA-256 de la release con el de tu descarga.
+PyInstaller executables that simulate input sometimes trigger false positives. That is why the exe is built publicly from this code; compare the release's SHA-256 with your download's.
