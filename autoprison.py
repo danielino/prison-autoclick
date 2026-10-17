@@ -9,7 +9,8 @@ Usage: TAB opens the menu, then:
   5 simple auto-fight (/repeat)   6 double-turn auto-fight (alternates sequences 8 and 9)   0 close menu
 TAB stops everything. Sequences are saved immediately to autoprison_data.json.
 """
-import ctypes, json, os, random, re, sys, threading, time, tkinter as tk
+import copy, ctypes, json, os, random, re, sys, threading, time, tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
 from ctypes import wintypes
 
 u32 = ctypes.windll.user32
@@ -18,7 +19,8 @@ try:
 except Exception:
     u32.SetProcessDPIAware()
 
-HERE = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+HERE = os.environ.get("AUTOPRISON_HOME") or os.path.dirname(
+    os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
 try:  # folder not writable (e.g. Program Files): use the user profile
     with open(os.path.join(HERE, ".w"), "w"):
         pass
@@ -32,7 +34,8 @@ VK = {"TAB": 0x09, "F8": 0x77, "F9": 0x78, "F10": 0x79, "CAPSLOCK": 0x14}
 LBTN, RBTN = 0x01, 0x02
 
 DEFAULTS = {"hotkey": "TAB", "speed": 1.0, "click_interval": 0.10, "repeat_command": "/repetir",
-            "repeat_interval": 1.5, "seq_pause": 0.5, "jitter": 0.2, "sequences": {}}
+            "repeat_interval": 1.5, "seq_pause": 0.5, "jitter": 0.2, "background": False, "sequences": {},
+            "names": {}, "library": {}}
 
 
 # ---------------------------------------------------------------- Win32 helpers
@@ -163,6 +166,43 @@ def changed(a, b, min_frac=0.03, tol=30):
     return n > 0 and hit / n >= min_frac
 
 
+u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+u32.PrintWindow.argtypes = [wintypes.HWND, _P, wintypes.UINT]
+
+
+def post_click(h, button, px, py, hold=0.04):
+    """Background click: window messages sent to the game window, no cursor movement, no focus change.
+    px, py are client-area pixels."""
+    lp = ((py & 0xFFFF) << 16) | (px & 0xFFFF)
+    down, up, mk = (0x0201, 0x0202, 0x0001) if button == "L" else (0x0204, 0x0205, 0x0002)
+    u32.PostMessageW(h, 0x0200, 0, lp)  # WM_MOUSEMOVE: the game needs to see the pointer over the window
+    time.sleep(0.02)
+    u32.PostMessageW(h, down, mk, lp)
+    time.sleep(hold)
+    u32.PostMessageW(h, up, 0, lp)
+
+
+def grab_window(h, rx, ry, rw, rh):
+    """Read a region (client pixels) of the game window even if other windows cover it (PrintWindow)."""
+    _, _, w, hh = client_rect(h)
+    sdc = u32.GetDC(None)
+    mdc = gdi.CreateCompatibleDC(sdc)
+    bmp = gdi.CreateCompatibleBitmap(sdc, w, hh)
+    old = gdi.SelectObject(mdc, bmp)
+    u32.PrintWindow(h, mdc, 3)  # PW_CLIENTONLY | PW_RENDERFULLCONTENT
+    bi = BMIH(40, w, -hh, 1, 32, 0, 0, 0, 0, 0, 0)
+    buf = ctypes.create_string_buffer(w * hh * 4)
+    gdi.GetDIBits(mdc, bmp, 0, hh, buf, ctypes.byref(bi), 0)
+    gdi.SelectObject(mdc, old)
+    gdi.DeleteObject(bmp)
+    gdi.DeleteDC(mdc)
+    u32.ReleaseDC(None, sdc)
+    raw = buf.raw
+    rx, ry = max(min(rx, w - 1), 0), max(min(ry, hh - 1), 0)
+    rw, rh = max(min(rw, w - rx), 1), max(min(rh, hh - ry), 1)
+    return b"".join(raw[((ry + r) * w + rx) * 4:((ry + r) * w + rx + rw) * 4] for r in range(rh))
+
+
 u32.GetForegroundWindow.restype = ctypes.c_void_p
 u32.GetAncestor.restype = ctypes.c_void_p
 u32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
@@ -241,6 +281,11 @@ class App:
         u32.SetWindowLongW(hwnd, -20, ex | 0x80000 | 0x20 | 0x80 | 0x08000000)
         self.ov.withdraw()
         self.blink = True
+        self.gui = Gui(self)
+
+    def slot_lines(self):
+        seqs, names = self.cfg["sequences"], self.cfg["names"]
+        return ["  %s  %s" % (s, names.get(s) or "(unnamed)") for s in sorted(seqs)]
 
     # -- input edge detection
     def pressed(self, vk):
@@ -262,12 +307,12 @@ class App:
             "MENU": ["AUTOPRISON  [%s = stop]" % self.cfg["hotkey"],
                      "1 Autoclick On/Off", "2 Record", "3 Play", "4 Change speed (x%.2f)" % self.cfg["speed"],
                      "5 Simple auto-fight", "6 Double-turn auto-fight", "0 Close menu"],
-            "REC_SLOT": ["RECORD: press 1-9 to choose the sequence slot", "0 cancel"],
+            "REC_SLOT": ["RECORD: press 1-9 to choose the sequence slot"] + self.slot_lines() + ["0 cancel"],
             "REC": ["RECORDING sequence %s  (%d clicks)" % (self.rec_slot, len(self.rec)),
                     "F9 = wait for a dialog window (screen center, e.g. MAQUINA)",
                     "F10 = wait for a menu next to the cursor",
                     "%s to finish and save" % self.cfg["hotkey"]],
-            "PLAY_SLOT": ["PLAY: press 1-9", "0 cancel"],
+            "PLAY_SLOT": ["PLAY: press 1-9"] + self.slot_lines() + ["0 cancel"],
             "SPEED": ["SPEED x%.2f" % self.cfg["speed"], "1 faster   2 slower   0 exit"],
             "RUN": [self.msg, "%s to stop" % self.cfg["hotkey"]],
         }.get(self.state, [])
@@ -291,14 +336,19 @@ class App:
             if seen != getattr(self, "_seen", None):
                 self._seen = seen
                 log("focus=%s state=%s fg=%s game=%s" % (bool(h), self.state, u32.GetForegroundWindow(), find_game()))
-            if not h:
-                if self.state != "IDLE":
-                    self.halt("Game not in foreground: stopped")
-                self.ov.withdraw()
-                self.prev = {}
-                return
             if self.state == "RUN" and self.worker and not self.worker.is_alive():
                 self.state = "IDLE"
+            bg = self.state == "RUN" and self.bg
+            if bg and self.pressed(VK["F12"]):  # global stop while running in the background
+                self.halt("Stopped (F12)")
+                bg = False
+            if not h:
+                if self.state != "IDLE" and not bg:
+                    self.halt("Game not in foreground: stopped")
+                self.ov.withdraw()
+                if not bg:
+                    self.prev = {}
+                return
             if self.pressed(self.hot):
                 self.on_hotkey()
             elif self.state == "REC":
@@ -341,11 +391,11 @@ class App:
         elif d == 4:
             self.state = "SPEED"
         elif d == 1:
-            self.run("Autoclick running", self.w_autoclick)
+            self.run("Autoclick running", self.w_autoclick, bg=True)
         elif d == 5:
             self.run("Simple auto-fight running (%s)" % s["repeat_command"], self.w_repeat)
         elif d == 6:
-            self.run("Double-turn auto-fight (sequences 8 and 9)", self.w_double)
+            self.run("Double-turn auto-fight (sequences 8 and 9)", self.w_double, bg=True)
 
     def on_rec_slot(self, d):
         if d == 0:
@@ -360,7 +410,7 @@ class App:
         elif str(d) not in self.cfg["sequences"]:
             self.msg = "Sequence %d is empty" % d
         else:
-            self.run("Playing sequence %d" % d, lambda: self.w_play([str(d)]))
+            self.run("Playing sequence %d" % d, lambda: self.w_play([str(d)]), bg=True)
 
     def on_speed(self, d):
         if d == 1:
@@ -402,17 +452,41 @@ class App:
             self.cfg["sequences"][self.rec_slot] = self.rec
             save(self.cfg)
             self.msg = "Sequence %s saved (%d clicks)" % (self.rec_slot, len(self.rec))
+            self.gui.refresh()
         self.rec = []
 
     # -- workers (thread): always interrupted by stop or by losing focus
-    def run(self, msg, fn):
+    def run(self, msg, fn, bg=False):
         self.stop.clear()
-        self.state, self.msg = "RUN", msg
+        self.bg = bg and bool(self.cfg["background"])
+        self.state, self.msg = "RUN", msg + (" [background, F12 stops]" if self.bg else "")
         self.worker = threading.Thread(target=fn, daemon=True)
         self.worker.start()
 
+    def game(self):
+        """The game window if it can currently receive our clicks, else None."""
+        if self.bg:
+            h = find_game()
+            return h if h and not u32.IsIconic(h) else None
+        return game_focused()
+
     def alive(self):
-        return not self.stop.is_set() and game_focused() is not None
+        return not self.stop.is_set() and self.game() is not None
+
+    def click_at(self, h, button, px, py):
+        """Click at client pixels (px, py): by messages in background mode, else with the real mouse."""
+        if self.bg:
+            post_click(h, button, px, py)
+        else:
+            x, y, _, _ = client_rect(h)
+            u32.SetCursorPos(x + px, y + py)
+            time.sleep(0.01)
+            mouse_click(button)
+
+    def snap(self, h, ev):
+        x, y, w, hh = client_rect(h)
+        rx, ry, rw, rh = int(ev["fx"] * w), int(ev["fy"] * hh), int(ev["fw"] * w), int(ev["fh"] * hh)
+        return grab_window(h, rx, ry, rw, rh) if self.bg else grab(x + rx, y + ry, rw, rh)
 
     def wait(self, secs):
         end = time.time() + secs
@@ -423,9 +497,19 @@ class App:
         return self.alive()
 
     def w_autoclick(self):
+        target = None
+        if self.bg:  # remember where the cursor was over the game when started; the real mouse is then free
+            h = find_game()
+            x, y, w, hh = client_rect(h)
+            cx, cy = cursor_pos()
+            target = (min(max(cx - x, 0), w - 1), min(max(cy - y, 0), hh - 1))
         while self.alive():
-            mouse_click("L")
-            if not self.wait(self.cfg["click_interval"] / self.cfg["speed"]):
+            if target:
+                post_click(self.game(), "L", *target)
+            else:
+                mouse_click("L")
+            j = self.cfg["jitter"]  # delay set in the window, in ms; independent of the sequence speed
+            if not self.wait(max(self.cfg["click_interval"] * (1 + random.uniform(-j, j)), 0.01)):
                 break
 
     def w_repeat(self):
@@ -449,23 +533,22 @@ class App:
                 continue  # handled together with the previous click
             if not self.wait(self.jit(ev["dt"])):
                 return False
-            h = game_focused()
+            h = self.game()  # in background mode: the game window even when not focused (user's request)
             if not h:
                 return False
             nxt = evs[i + 1] if i + 1 < len(evs) and "wait" in evs[i + 1] else None
-            x, y, w, hh = client_rect(h)
-            u32.SetCursorPos(int(x + ev["fx"] * w), int(y + ev["fy"] * hh))
-            time.sleep(0.01)
+            _, _, w, hh = client_rect(h)
+            px, py = int(ev["fx"] * w), int(ev["fy"] * hh)
             for attempt in (1, 2):
-                base = grab(*self.region(h, nxt)) if nxt else None
-                mouse_click(ev["b"])
+                base = self.snap(h, nxt) if nxt else None
+                self.click_at(h, ev["b"], px, py)
                 if not nxt:
                     break
                 end = time.time() + nxt["timeout"]
                 ok = False
                 while time.time() < end and self.alive():
-                    time.sleep(0.04)
-                    if changed(base, grab(*self.region(h, nxt))):
+                    time.sleep(0.08 if self.bg else 0.04)
+                    if changed(base, self.snap(h, nxt)):
                         ok = True
                         break
                 if not self.alive():
@@ -497,6 +580,202 @@ class App:
         self.root.mainloop()
 
 
+class Gui:
+    """Control window: autoclick delay, the 9 sequence slots with names, and a library of named sequences."""
+
+    def __init__(self, app):
+        self.app, self.cfg = app, app.cfg
+        w = self.win = tk.Toplevel(app.root)
+        w.title("AutoPrison")
+        w.geometry("760x480")
+        w.minsize(640, 420)
+        w.protocol("WM_DELETE_WINDOW", app.root.destroy)  # closing this window quits the program
+
+        top = ttk.LabelFrame(w, text="Autoclick (menu option 1)")
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        self.delay = tk.StringVar(value=str(int(round(self.cfg["click_interval"] * 1000))))
+        self.jit = tk.StringVar(value=str(int(round(self.cfg["jitter"] * 100))))
+        self.speed = tk.StringVar(value="%g" % self.cfg["speed"])
+        for col, (label, var, lo, hi, inc, key) in enumerate((
+                ("Delay between clicks (ms)", self.delay, 10, 60000, 10, "delay"),
+                ("Random variation (±%)", self.jit, 0, 90, 5, "jit"),
+                ("Sequence speed (x)", self.speed, 0.1, 8, 0.05, "speed"))):
+            ttk.Label(top, text=label).grid(row=0, column=col, padx=8, pady=(6, 0), sticky="w")
+            sp = ttk.Spinbox(top, from_=lo, to=hi, increment=inc, textvariable=var, width=10,
+                             command=self.apply)
+            sp.grid(row=1, column=col, padx=8, pady=(0, 8), sticky="w")
+            sp.bind("<KeyRelease>", lambda e: self.apply())
+            sp.bind("<FocusOut>", lambda e: self.apply())
+        ttk.Label(top, text="Delay and variation apply to autoclick; speed applies to recorded sequences.",
+                  foreground="gray").grid(row=2, column=0, columnspan=3, padx=8, pady=(0, 6), sticky="w")
+        self.bgvar = tk.BooleanVar(value=bool(self.cfg["background"]))
+        ttk.Checkbutton(top, variable=self.bgvar, command=self.apply, text=(
+            "Background mode (experimental): clicks are sent to the game window without moving your mouse, "
+            "so you can use other programs. Keep the game window open, not minimized. F12 stops from anywhere."
+        )).grid(row=3, column=0, columnspan=3, padx=8, pady=(0, 8), sticky="w")
+
+        body = ttk.Frame(w)
+        body.pack(fill="both", expand=True, padx=10, pady=4)
+        body.columnconfigure((0, 1), weight=1, uniform="c")
+        body.rowconfigure(0, weight=1)
+
+        left = ttk.LabelFrame(body, text="Slots (keys 1-9 in game)")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.slots = self.tree(left, ("slot", "name", "clicks"), ("Slot", "Name", "Clicks"), (45, 190, 55))
+        self.slots.bind("<Double-1>", lambda e: self.rename_slot())
+        bar = ttk.Frame(left)
+        bar.pack(fill="x", padx=6, pady=6)
+        for text, cmd in (("Rename", self.rename_slot), ("Clear", self.clear_slot),
+                          ("Save to library →", self.to_library)):
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
+
+        right = ttk.LabelFrame(body, text="Library (saved sequences)")
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        self.lib = self.tree(right, ("name", "clicks"), ("Name", "Clicks"), (210, 55))
+        self.lib.bind("<Double-1>", lambda e: self.rename_lib())
+        bar = ttk.Frame(right)
+        bar.pack(fill="x", padx=6, pady=6)
+        for text, cmd in (("← Load into slot", self.from_library), ("Rename", self.rename_lib),
+                          ("Delete", self.delete_lib)):
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
+
+        ttk.Label(w, foreground="gray", wraplength=720, text=(
+            "Record in game: TAB, 2, then 1-9. Play: TAB, 3, then 1-9. Name a slot, save it to the library, "
+            "and load it back into any slot later.")).pack(fill="x", padx=12, pady=(2, 10))
+        self.refresh()
+
+    @staticmethod
+    def tree(parent, cols, heads, widths):
+        t = ttk.Treeview(parent, columns=cols, show="headings", selectmode="browse", height=9)
+        for c, h, wd in zip(cols, heads, widths):
+            t.heading(c, text=h)
+            t.column(c, width=wd, anchor="w" if c == "name" else "center")
+        t.pack(fill="both", expand=True, padx=6, pady=(6, 0))
+        return t
+
+    # -- settings
+    def apply(self):
+        self.cfg["background"] = bool(self.bgvar.get())
+        try:
+            self.cfg["click_interval"] = min(max(float(self.delay.get()), 10), 60000) / 1000
+            self.cfg["jitter"] = min(max(float(self.jit.get()), 0), 90) / 100
+            self.cfg["speed"] = min(max(float(self.speed.get().replace(",", ".")), 0.1), 8)
+        except ValueError:
+            return  # half-typed value: ignore until it is a number
+        save(self.cfg)
+
+    # -- helpers
+    def sel(self, tree):
+        s = tree.selection()
+        return tree.item(s[0], "values")[0] if s else None
+
+    def refresh(self):
+        keep_s, keep_l = self.sel(self.slots), self.sel(self.lib)
+        self.slots.delete(*self.slots.get_children())
+        self.lib.delete(*self.lib.get_children())
+        for n in range(1, 10):
+            s = str(n)
+            evs = self.cfg["sequences"].get(s)
+            self.slots.insert("", "end", iid=s, values=(
+                s, self.cfg["names"].get(s, "") if evs else "", self.clicks(evs) if evs else "—"))
+        for name in sorted(self.cfg["library"], key=str.lower):
+            self.lib.insert("", "end", iid=name, values=(name, self.clicks(self.cfg["library"][name])))
+        if keep_s and self.slots.exists(keep_s):
+            self.slots.selection_set(keep_s)
+        if keep_l and self.lib.exists(keep_l):
+            self.lib.selection_set(keep_l)
+
+    @staticmethod
+    def clicks(evs):
+        return sum(1 for e in evs if "wait" not in e)
+
+    def ask(self, title, prompt, initial=""):
+        v = simpledialog.askstring(title, prompt, initialvalue=initial, parent=self.win)
+        return v.strip() if v and v.strip() else None
+
+    def busy(self):
+        if self.app.state in ("REC", "RUN"):
+            messagebox.showinfo("AutoPrison", "Stop the recording or playback first.", parent=self.win)
+            return True
+        return False
+
+    # -- slot actions
+    def rename_slot(self):
+        s = self.sel(self.slots)
+        if not s or s not in self.cfg["sequences"]:
+            return messagebox.showinfo("AutoPrison", "Select a slot that has a recorded sequence.", parent=self.win)
+        name = self.ask("Rename", "Name for slot %s:" % s, self.cfg["names"].get(s, ""))
+        if name:
+            self.cfg["names"][s] = name
+            save(self.cfg)
+            self.refresh()
+
+    def clear_slot(self):
+        s = self.sel(self.slots)
+        if self.busy() or not s or s not in self.cfg["sequences"]:
+            return
+        if messagebox.askyesno("Clear slot", "Clear slot %s? Save it to the library first to keep it." % s,
+                               parent=self.win):
+            self.cfg["sequences"].pop(s, None)
+            self.cfg["names"].pop(s, None)
+            save(self.cfg)
+            self.refresh()
+
+    def to_library(self):
+        s = self.sel(self.slots)
+        if not s or s not in self.cfg["sequences"]:
+            return messagebox.showinfo("AutoPrison", "Select a slot that has a recorded sequence.", parent=self.win)
+        name = self.cfg["names"].get(s) or self.ask("Save to library", "Name for this sequence:", "Sequence %s" % s)
+        if not name:
+            return
+        if name in self.cfg["library"] and not messagebox.askyesno(
+                "Overwrite", "'%s' already exists in the library. Overwrite it?" % name, parent=self.win):
+            return
+        self.cfg["names"][s] = name
+        self.cfg["library"][name] = copy.deepcopy(self.cfg["sequences"][s])
+        save(self.cfg)
+        self.refresh()
+
+    # -- library actions
+    def from_library(self):
+        name, s = self.sel(self.lib), self.sel(self.slots)
+        if self.busy():
+            return
+        if not name or not s:
+            return messagebox.showinfo("AutoPrison", "Select a library entry and a target slot.", parent=self.win)
+        if s in self.cfg["sequences"] and not messagebox.askyesno(
+                "Replace", "Slot %s already has a sequence. Replace it?" % s, parent=self.win):
+            return
+        self.cfg["sequences"][s] = copy.deepcopy(self.cfg["library"][name])
+        self.cfg["names"][s] = name
+        save(self.cfg)
+        self.refresh()
+
+    def rename_lib(self):
+        old = self.sel(self.lib)
+        if not old:
+            return
+        new = self.ask("Rename", "New name:", old)
+        if not new or new == old:
+            return
+        if new in self.cfg["library"]:
+            return messagebox.showinfo("AutoPrison", "A library entry named '%s' already exists." % new,
+                                       parent=self.win)
+        self.cfg["library"][new] = self.cfg["library"].pop(old)
+        for s, n in self.cfg["names"].items():
+            if n == old:
+                self.cfg["names"][s] = new
+        save(self.cfg)
+        self.refresh()
+
+    def delete_lib(self):
+        name = self.sel(self.lib)
+        if name and messagebox.askyesno("Delete", "Delete '%s' from the library?" % name, parent=self.win):
+            self.cfg["library"].pop(name, None)
+            save(self.cfg)
+            self.refresh()
+
+
 if __name__ == "__main__":
-    print("AutoPrison is running. Close this window to quit (sequences are already saved).")
+    print("AutoPrison is running. Close the AutoPrison window to quit (everything is already saved).")
     App().loop()
