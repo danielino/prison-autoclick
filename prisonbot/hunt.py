@@ -1,0 +1,638 @@
+"""Auto-hunt: find a bot, attack, fight, loot, walk the minimap, patrol, avoid danger."""
+import copy, ctypes, json, os, random, re, sys, threading, time
+from ctypes import wintypes
+from .config import *
+from .winapi import *
+from .vision import *
+from .minimap import *
+
+
+class HuntMixin:
+    """Methods of App for option 7 (auto-hunt)."""
+
+    def hunt_corners(self, h):
+        x, y, w, hh = client_rect(h)
+        cx, cy = cursor_pos()
+        pt = (min(max((cx - x) / max(w, 1), 0.0), 1.0), min(max((cy - y) / max(hh, 1), 0.0), 1.0))
+        for vk, key in ((VK["F9"], "tl"), (VK["F10"], "br")):
+            if self.pressed(vk):
+                self.hunt_pts[key] = pt
+                log("HUNT corner %s = (%.3f, %.3f)" % (key, pt[0], pt[1]))
+
+    def on_hunt_setup(self, d):
+        if d == 0:
+            self.state = "IDLE"
+        elif d == 1:
+            if len(self.hunt_pts) < 2:
+                self.msg = "Set both corners first (F9 and F10)"
+                return
+            (ax, ay), (bx, by) = self.hunt_pts["tl"], self.hunt_pts["br"]
+            area = [min(ax, bx), min(ay, by), max(ax, bx), max(ay, by)]
+            if area[2] - area[0] < 0.03 or area[3] - area[1] < 0.03:
+                self.msg = "Area too small: pick two opposite corners"
+                return
+            self.cfg["hunt_area"] = [round(v, 4) for v in area]
+            save(self.cfg)
+            self.run("Auto-hunt running", self.w_hunt)
+        elif d == 2:
+            if self.cfg.get("hunt_area"):
+                self.run("Auto-hunt running (saved area)", self.w_hunt)
+            else:
+                self.msg = "No saved area yet"
+
+    # -- auto-hunt: attack the bot at the starting spot, repeat the attack each turn, loot, wait for it to respawn
+    def hunt_say(self, text):
+        self.msg = "Auto-hunt: " + text
+        log("HUNT " + text)
+
+    def hunt_move(self, h, fx, fy):
+        x, y, w, hh = client_rect(h)
+        u32.SetCursorPos(x + int(fx * w), y + int(fy * hh))
+        time.sleep(0.12)
+
+    def hunt_in_combat(self, h):
+        """(in combat?, banner fraction, turn-buttons fraction). Either cue counts: the red COMBATE banner or the
+        green turn buttons, so a miss of one does not hide a fight."""
+        banner, fc = detect(h, "combat")
+        mine, ft = detect(h, "turn")
+        return banner or mine, fc, ft
+
+    def hunt_attack(self, h, spot):
+        """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected."""
+        for attempt in (1,):
+            self.hunt_say("attacking (Ctrl+A + click)")
+            self.hunt_move(h, *spot)
+            key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
+            time.sleep(0.1)
+            mouse_click("L")
+            # the character now WALKS to the bot and the fight starts when it arrives: keep waiting while it moves,
+            # give up only when it has stood still for 3 s without a fight (or after 30 s)
+            t0, best, still, last = time.time(), (0.0, 0.0), 0.0, find_self(h)
+            lastm = read_minimap(*grab_minimap(h))[0]  # the minimap arrow also tells whether we are walking
+            while time.time() - t0 < 30:
+                if not self.wait(0.4):
+                    return False
+                ok, fc, ft = self.hunt_in_combat(h)
+                best = (max(best[0], fc), max(best[1], ft))
+                if ok:
+                    log("HUNT fight detected after %.1f s (banner %.3f, buttons %.3f)" % (time.time() - t0, fc, ft))
+                    return True
+                me = find_self(h)
+                pm = read_minimap(*grab_minimap(h))[0]
+                same_scene = bool(me and last) and abs(me[0] - last[0]) < 0.004 and abs(me[1] - last[1]) < 0.004
+                same_map = bool(pm and lastm) and abs(pm[0] - lastm[0]) < 0.006 and abs(pm[1] - lastm[1]) < 0.006
+                if same_scene and (same_map or not pm):
+                    still += 0.4
+                else:
+                    still = 0.0
+                last, lastm = me or last, pm or lastm
+                if still >= 3.0 and time.time() - t0 > 1.5:
+                    break
+            log("HUNT attempt %d at (%.3f,%.3f): no fight after %.1f s (best banner %.3f, buttons %.3f)" % (
+                attempt, spot[0], spot[1], time.time() - t0, best[0], best[1]))
+        return False
+
+    def hunt_approach(self, h, bot):
+        """The game refuses attacks on bots that are too far ("escapado de tu radio de acciÃ³n"): click the floor part of
+        the way towards the bot, then wait until the character stops. False if we cannot see ourselves."""
+        me = find_self(h)
+        if not me:
+            log("HUNT approach: own label not found")
+            return False
+        mx, my = me[0], me[1] + FEET_DROP
+        bx, by = bot[0], bot[1] + 0.11  # body point + a bit = the bot's feet
+        px, py = mx + (bx - mx) * 0.6, my + (by - my) * 0.6
+        log("HUNT approach: me=(%.3f,%.3f) bot=(%.3f,%.3f) click=(%.3f,%.3f)" % (mx, my, bx, by, px, py))
+        self.hunt_say("moving closer to the bot")
+        self.hunt_move(h, px, min(py, 0.88))
+        mouse_click("L")
+        last, still, t0 = me, 0.0, time.time()
+        while time.time() - t0 < 8:
+            if not self.wait(0.4):
+                return False
+            cur = find_self(h)
+            if cur and last and abs(cur[0] - last[0]) < 0.004 and abs(cur[1] - last[1]) < 0.004:
+                still += 0.4
+                if still >= 1.2:
+                    return True
+            else:
+                still = 0.0
+            last = cur or last
+        return True
+
+    def hunt_engage(self, h, bot):
+        """Attack; if the bot is out of range, walk closer and try again (up to 4 times)."""
+        for step in range(4):
+            if self.hunt_attack(h, bot):
+                return True
+            if not self.alive() or step == 3 or not self.hunt_approach(h, bot):
+                return False
+            near = [p for p in find_bots(h) if abs(p[0] - bot[0]) < 0.25 and abs(p[1] - bot[1]) < 0.25]
+            bot = min(near, key=lambda p: (p[0] - bot[0]) ** 2 + (p[1] - bot[1]) ** 2) if near else bot
+        return False
+
+    OPENING = 2  # manual attacks (Ctrl+A + click) before Ctrl+R has something to repeat
+
+    def hunt_manual_attack(self, h, spot):
+        """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
+        stands somewhere else, so the scene is scanned again)."""
+        bots = find_bots(h)
+        if not bots:  # in a fight the name label changes colour: the red health bars still show where they are
+            bots = find_bars(h)
+            if bots:
+                log("HUNT manual attack: no label, using the health bar")
+        if bots:
+            ref = spot or (0.5, 0.5)
+            spot = min(bots, key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
+        if not spot:
+            log("HUNT manual attack: no bot found on the screen")
+            return False
+        self.hunt_move(h, *spot)
+        time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
+        mouse_click("L")  # inside a fight a plain click on the bot attacks (no Ctrl+A)
+        return True
+
+    def hunt_fight(self, h, spot=None):
+        """Attack by hand for the first turns (Ctrl+R has nothing to repeat yet), then Ctrl+R on every turn of yours until
+        the fight is over (banner gone for 2 s). If Ctrl+R does not pass the turn (e.g. the bot it repeated is dead and a
+        second one is in the fight), it starts again with manual attacks. False if stopped/timeout."""
+        last, gone, t0 = 0.0, None, time.time()
+        manual, sent_r, end_turn, away, fails = self.OPENING, None, False, None, 0
+        mine_t = -99.0
+        while True:
+            if not self.wait(0.4):
+                return False
+            now = time.time()
+            in_combat, fc, ft = self.hunt_in_combat(h)
+            if ft >= DETECT["turn"][5]:
+                mine_t = now
+            mine = now - mine_t < 1.2  # the green ring pulses: a short gap does not mean the turn is over
+            if in_combat:
+                gone = None
+                # the turn really passed (buttons away for 2 s): nothing left to end, the repeat worked
+                away = (away or now) if not mine else None
+                if away and now - away >= 2.0:
+                    end_turn, sent_r, fails = False, None, 0
+                if sent_r and mine and now - sent_r >= 3.0:
+                    # still our turn 3 s after Ctrl+R: the game said "La secuencia de repetición no puede ser ejecutada"
+                    # (the bot it repeated on is dead and another one is in the fight): attack by hand again
+                    sent_r = None
+                    log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
+                    manual, end_turn = self.OPENING, False
+                if mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
+                    log("HUNT health %.0f%% in the fight" % (read_health(h) * 100))
+                    if manual > 0:
+                        log("HUNT my turn (buttons %.3f) -> manual attack (%d left)" % (ft, manual))
+                        self.hunt_say("my turn: attacking (click on the bot)")
+                        if self.hunt_manual_attack(h, spot):
+                            manual -= 1
+                            end_turn = manual == 0  # both attacks done: spend the leftover action points by ending the turn
+                    elif end_turn:
+                        log("HUNT still my turn after the attacks -> Ctrl+T (end turn)")
+                        self.hunt_say("my turn: ending it (Ctrl+T)")
+                        key_combo(0x1D, 0x14)
+                        end_turn = False
+                    else:
+                        log("HUNT my turn (buttons %.3f) -> Ctrl+R" % ft)
+                        self.hunt_say("my turn: Ctrl+R")
+                        key_combo(0x1D, 0x13)
+                        sent_r = now
+                    last = now
+                else:
+                    self.hunt_say("fighting" if not mine else "my turn, waiting %ds" % max(
+                        0, round(max(self.cfg["repeat_interval"], 5.0) - (now - last))))
+            else:
+                gone = gone or now
+                if now - gone >= 2.0:
+                    return True
+            if now - t0 > 900:
+                self.hunt_say("fight longer than 15 min: stopped")
+                return False
+
+    def hunt_loot(self, h):
+        if not self.wait(1.0):
+            return
+        self.hunt_say("looting (%s)" % self.cfg["loot_command"])
+        type_line(self.cfg["loot_command"])
+        end = time.time() + 3.5
+        opened = False
+        top = None
+        while time.time() < end and top is None:
+            if not self.wait(0.2):
+                return
+            top = find_loot(h)
+        if top is None:
+            log("HUNT loot window did not open")
+            return
+        skip, destroyed = 0, 0  # skip = rows at the top that cannot be taken and are left alone
+        for k in range(14):
+            # item rows (icon + name) sit 0.095 of the screen height below the header, 0.069 apart; the window is
+            # re-located every time because it shrinks and re-centres when an item is taken
+            row = skip + (0 if k < 10 else k - 9)  # first row until it is empty, then probe the rows below
+            log("HUNT loot click %d: header y=%.3f row=%d" % (k, top, row))
+            base = grab_chat(h)
+            self.hunt_move(h, 0.41, top + 0.095 + row * 0.069)
+            mouse_click("L")
+            if not self.wait(0.6):
+                return
+            if chat_unique_error(h) and changed(base, grab_chat(h), min_frac=0.01, tol=40):
+                log("HUNT unique item at row %d (the game says we already have one)" % row)
+                if self.cfg["hunt_destroy_unique"] and destroyed < 4 and self.hunt_destroy(h, top, row):
+                    destroyed += 1
+                else:
+                    skip += 1  # leave it and try the next one
+            top = find_loot(h)
+            if top is None:
+                if not self.wait(0.4):
+                    return
+                top = find_loot(h)
+                if top is None:
+                    log("HUNT loot window closed after %d clicks" % (k + 1))
+                    return
+        log("HUNT loot window still open after 14 clicks")
+
+    def hunt_destroy(self, h, top, row):
+        """Right click the item -> CONFIRMAR dialog -> SI. The items below move up. True if the dialog was answered."""
+        self.hunt_say("destroying a unique item")
+        self.hunt_move(h, 0.41, top + 0.095 + row * 0.069)
+        mouse_click("R")
+        if not self.wait(0.7):
+            return False
+        ty = find_dialog(h, top + 0.05)
+        if ty is None:
+            log("HUNT destroy: the CONFIRMAR dialog did not appear")
+            return False
+        self.hunt_move(h, 0.4665, ty + 0.106)  # the SI button: left of the middle, a little below the title bar
+        mouse_click("L")
+        if not self.wait(0.8):
+            return False
+        gone = find_dialog(h, top + 0.05) is None
+        log("HUNT destroy: SI clicked, dialog %s" % ("closed" if gone else "STILL OPEN"))
+        return gone
+
+    DANGER_R = 0.25  # minimap units (fraction of the minimap width): keep at least this far from a deadly spot
+    ALARM_R = 0.20  # if we are this close to one, stop everything
+
+    @staticmethod
+    def seg_dist(p, a, b):
+        """Distance from point p to the segment a-b."""
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = dx * dx + dy * dy
+        t = 0.0 if L == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
+        return ((p[0] - a[0] - t * dx) ** 2 + (p[1] - a[1] - t * dy) ** 2) ** 0.5
+
+    def unsafe(self, a, b, deadly):
+        """True if the straight walk a -> b passes within DANGER_R of a deadly spot."""
+        for d in deadly:
+            start = ((a[0] - d[0]) ** 2 + (a[1] - d[1]) ** 2) ** 0.5
+            # already inside the keep-away radius (e.g. standing at the safe limit): only walking away is allowed
+            if self.seg_dist(d, a, b) < min(d[2], start - 0.01):
+                return True
+        return False
+
+    def hunt_deadly_near(self, h, factor):
+        """Are we within `factor` x the alarm radius of a deadly spot (red diamond or visor fan)?"""
+        player, _, _, deadly = read_minimap(*grab_minimap(h))
+        return bool(player) and any(((player[0] - d[0]) ** 2 + (player[1] - d[1]) ** 2) ** 0.5 < factor * d[3]
+                                    for d in deadly)
+
+    def hunt_forbidden_for_zone(self, h):
+        """The forbidden rectangles were drawn on one zone's minimap: use them only if the map in front of us is that
+        zone (same shape), otherwise they would fall on random spots of another map."""
+        rects = self.cfg.get("hunt_forbidden")
+        if not rects:
+            return set_forbidden([])
+        d = zone_differs(self.cfg.get("hunt_forbidden_map"), grab_zone(h))
+        if d is None or d > 0.25:
+            log("HUNT forbidden zones ignored: this is not the map they were drawn on (difference %s)" % (
+                "unknown" if d is None else "%.2f" % d))
+            return set_forbidden([])
+        log("HUNT %d forbidden zone(s) active (map difference %.2f)" % (len(rects), d))
+        set_forbidden(rects)
+
+    def hunt_zone_changed(self, h, zone0):
+        """The zone name (top right) differs from the one at start: we died / left the zone. Stops the hunt."""
+        if zone0 is None or self.hunt_in_combat(h)[0]:
+            return False  # the name bar is hidden during a fight
+        def diff():
+            d = zone_differs(zone0, grab_zone(h))
+            return d is not None and d > 0.25  # None: map hidden, we cannot tell
+        if not diff():
+            return False
+        for _ in range(3):  # a real change stays: look again a few times before believing it
+            if not self.wait(1.5) or self.hunt_in_combat(h)[0] or not diff():
+                log("HUNT zone map looked different for a moment: ignored")
+                return False
+        log("HUNT zone map changed: stopping")
+        self.halt("Zone changed (did you die?): hunt stopped")
+        return True
+
+    def hunt_isolated(self, p, others, gap):
+        """True if no other point in `others` is closer than `gap` (fraction of the screen width) to p."""
+        return all(((p[0] - q[0]) ** 2 + ((p[1] - q[1]) * 0.563) ** 2) ** 0.5 >= gap
+                   for q in others if q is not p and q != p)
+
+    def is_npc(self, sig):
+        """A name label that failed to start a fight twice (an NPC you can only talk to): never attack it."""
+        now = time.time()
+        return any(n[2] > now and n[1] >= 2 and sig_similar(sig, n[0]) for n in getattr(self, "npc", []))
+
+    def note_failed_attack(self, sig):
+        if not sig:
+            return
+        now = time.time()
+        self.npc = [n for n in getattr(self, "npc", []) if n[2] > now]
+        for n in self.npc:
+            if sig_similar(sig, n[0]):
+                n[1] += 1
+                n[2] = now + 1800
+                if n[1] == 2:
+                    log("HUNT this name label failed twice: treated as an NPC (talk only), ignored for 30 min")
+                return
+        self.npc.append([sig, 1, now + 1800])
+
+    NEAR = 0.22  # bots this close to the player (fraction of the screen width) are attackable even outside the area
+    HOP = 0.12  # minimap units walked per click
+
+    def hunt_candidates(self, h, bad):
+        """Bots we may attack: in the chosen area, or right next to the player; and far enough from every other bot
+        (so only one enters the fight)."""
+        ax0, ay0, ax1, ay1 = self.cfg["hunt_area"]
+        allbots = find_bots(h)
+        npcs = [p for p in allbots if self.is_npc(BOT_SIG.get(p))]
+        if npcs:
+            allbots = [p for p in allbots if p not in npcs]
+        now = time.time()
+        me = find_self(h)
+        mine = (me[0], me[1] + BODY_DROP) if me else None
+        near = lambda p: bool(mine) and ((p[0] - mine[0]) ** 2 + ((p[1] - mine[1]) * 0.563) ** 2) ** 0.5 <= self.NEAR
+        # a body point below 0.78 would be a click on the bottom bar, not on the bot
+        eligible = [p for p in allbots if p[1] <= 0.78 and ((ax0 <= p[0] <= ax1 and ay0 <= p[1] <= ay1) or near(p))]
+        fresh = lambda p: all(abs(p[0] - b[0]) > 0.05 or abs(p[1] - b[1]) > 0.08 for b in bad if b[2] > now)
+        self.hunt_counts = (len(allbots), len(eligible))
+        self.hunt_outside = [p for p in allbots if p not in eligible and fresh(p)
+                             and self.hunt_isolated(p, allbots, self.cfg["hunt_gap"])]
+        return [p for p in eligible if self.hunt_isolated(p, allbots, self.cfg["hunt_gap"]) and fresh(p)], len(allbots)
+
+    def hunt_goto(self, h, target, bad, retreat=False, stop_for_target=True):
+        """Walk to a minimap point in short hops. The game picks its own route, so one long click could pass right by
+        a visor: every hop is checked against the deadly spots first.
+        Returns 'arrived', 'stuck', 'blocked', 'danger', 'combat', 'target' or 'stopped'."""
+        mx, my, mw, mh = map_area(h)
+        dist = lambda a, b: ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        stuck = 0
+        for _ in range(30):
+            player, _, dots, deadly = read_minimap(*grab_minimap(h))
+            if not player:
+                return "stuck"
+            if not retreat and any(dist(player, d) < d[3] for d in deadly):
+                return "danger"
+            left = dist(player, target)
+            if left < 0.04:
+                return "arrived"
+            k = min(1.0, self.HOP / left)
+            nxt = (player[0] + (target[0] - player[0]) * k, player[1] + (target[1] - player[1]) * k)
+            if not retreat and self.unsafe(player, nxt, deadly):
+                return "blocked"
+            if any(dist(nxt, o) < 0.045 for o in dots):
+                return "blocked"
+            self.hunt_move(h, mx + nxt[0] * mw, my + nxt[1] * mh)
+            mouse_click("L")
+            last, still, t0 = player, 0.0, time.time()
+            while time.time() - t0 < 8:
+                if not self.wait(0.4):
+                    return "stopped"
+                if self.hunt_in_combat(h)[0]:
+                    return "combat"
+                if stop_for_target and not retreat and self.hunt_candidates(h, bad)[0]:
+                    return "target"
+                pl, _, _, dd = read_minimap(*grab_minimap(h))
+                if not retreat and pl and any(dist(pl, d) < d[3] for d in dd):
+                    return "danger"
+                if pl and abs(pl[0] - last[0]) < 0.008 and abs(pl[1] - last[1]) < 0.008:
+                    still += 0.4
+                    if still >= 1.2:
+                        break
+                else:
+                    still = 0.0
+                last = pl or last
+            if dist(last, player) < 0.015:
+                stuck += 1
+                if stuck >= 2:
+                    return "stuck"
+            else:
+                stuck = 0
+        return "arrived"
+
+    def hunt_retreat(self, h):
+        """Walk back to the last safe position (or the start) after getting too close to a deadly spot."""
+        target = self.safe_pos or self.home
+        if not target:
+            return False
+        self.hunt_say("DANGER: moving away from a deadly bot")
+        for attempt in (1, 2):
+            r = self.hunt_goto(h, target, [], retreat=True, stop_for_target=False)
+            log("HUNT retreat %d towards (%.3f,%.3f): %s" % (attempt, target[0], target[1], r))
+            if r == "stopped":
+                return False
+            if not self.hunt_deadly_near(h, 1.0):
+                return True
+        return False
+
+    def hunt_alarm(self, h):
+        """Too close to a deadly spot (red diamond or visor)? Retreat to the last safe position and go on; stop only if
+        the retreat does not work. True if danger was found (and dealt with or stopped)."""
+        player, _, _, deadly = read_minimap(*grab_minimap(h))
+        if player and any(((player[0] - d[0]) ** 2 + (player[1] - d[1]) ** 2) ** 0.5 < d[3] for d in deadly):
+            log("HUNT DANGER: deadly diamond / visor close to the player (%.3f,%.3f)" % player)
+            if not self.hunt_retreat(h):
+                self.halt("DANGER: a deadly bot (red or with a visor) is close and I could not back off. Hunt stopped")
+            return True
+        if player and all(((player[0] - d[0]) ** 2 + (player[1] - d[1]) ** 2) ** 0.5 > 1.6 * d[3] for d in deadly):
+            self.safe_pos = player
+        return False
+
+    def hunt_walk(self, h, tried, bad):
+        """Walk (in hops) next to the nearest isolated bot diamond that is not near a deadly spot or an exit.
+        True if it did something."""
+        buf, rw, rh = grab_minimap(h)
+        player, diamonds, dots, deadly = read_minimap(buf, rw, rh)
+        now = time.time()
+        tried[:] = [t for t in tried if t[2] > now]
+        dist = lambda a, b: ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        gap = self.cfg["hunt_map_gap"]
+        free = [d for d in diamonds
+                if all(dist(d, q) > q[2] for q in deadly)  # never near a deadly spot
+                and all(dist(d, q) >= gap for q in diamonds if q != d)  # alone
+                and all(abs(d[0] - t[0]) > 0.04 or abs(d[1] - t[1]) > 0.04 for t in tried)]
+        if now - getattr(self, "_mlog", 0) > 3:
+            self._mlog = now
+            log("HUNT minimap: player=%s diamonds=%d alone-and-new=%d deadly=%d dots=%d" % (
+                "yes" if player else "NOT FOUND", len(diamonds), len(free), len(deadly), len(dots)))
+        if not player or not free:
+            return False
+        d = min(free, key=lambda q: dist(q, player))
+        tried.append((d[0], d[1], now + 45))
+        # stop a little short of the diamond, on the player side
+        k = min(0.07 / max(dist(d, player), 1e-6), 0.9)
+        goal = (d[0] + (player[0] - d[0]) * k, d[1] + (player[1] - d[1]) * k)
+        self.hunt_say("walking to a bot (minimap)")
+        log("HUNT walk: diamond (%.3f,%.3f) player (%.3f,%.3f) goal (%.3f,%.3f)" % (d + player + goal))
+        r = self.hunt_goto(h, goal, bad)
+        log("HUNT walk result: %s" % r)
+        if r == "danger":
+            self.hunt_alarm(h)
+            return True
+        return r in ("arrived", "combat", "target", "stopped")
+
+    def hunt_go_home(self, h, home):
+        """Walk back to where the hunt started. True if we moved."""
+        player, _, dots, deadly = read_minimap(*grab_minimap(h))
+        if not player or ((player[0] - home[0]) ** 2 + (player[1] - home[1]) ** 2) ** 0.5 < 0.05:
+            return False
+        if any(((home[0] - o[0]) ** 2 + (home[1] - o[1]) ** 2) ** 0.5 < 0.045 for o in dots):
+            return False  # the starting point is right next to an exit: do not click there
+        self.hunt_say("going back to the starting point")
+        log("HUNT going back to the start: player (%.3f,%.3f) home (%.3f,%.3f)" % (player + home))
+        r = self.hunt_goto(h, home, [], stop_for_target=False)
+        log("HUNT going home result: %s" % r)
+        if r == "danger":
+            self.hunt_alarm(h)
+        return r in ("arrived", "combat", "stopped", "danger")
+
+    def hunt_patrol_step(self, h, st, home):
+        """One leg of the patrol: walk (in hops) to a minimap point far from the ones already visited. Bot diamonds only
+        show up on the minimap after moving, so we walk a tour of K points, dwelling at each one so that the scene
+        scan can find bots. Unreachable or unsafe points are dropped."""
+        dist = lambda a, b: ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        player, _, dots, deadly = read_minimap(*grab_minimap(h))
+        if not player:
+            return False
+        if "pts" not in st:  # new tour: grid of candidate points, farthest-first from the start
+            grid = [(0.12 + 0.11 * i, 0.12 + 0.11 * j) for i in range(8) for j in range(8)]
+            grid = [p for p in grid if all(dist(p, o) > 0.08 for o in dots)]
+            order, ref = [], [home or player]
+            while grid and len(order) < 40:
+                p = max(grid, key=lambda q: min(dist(q, r) for r in ref))
+                grid.remove(p)
+                order.append(p)
+                ref.append(p)
+            st["pts"], st["done"] = order, 0
+            log("HUNT patrol: new tour, %d candidate points" % len(order))
+        for _ in range(4):  # try up to 4 candidates for this leg
+            if st["done"] >= self.cfg["hunt_tour"] or not st["pts"]:
+                return False
+            p = st["pts"].pop(0)
+            if any(dist(p, d) < d[2] for d in deadly) or self.unsafe(player, p, deadly):
+                log("HUNT patrol point (%.2f,%.2f) skipped: a deadly spot is near it or the way" % p)
+                continue
+            self.hunt_say("patrol: walking to point %d/%d" % (st["done"] + 1, self.cfg["hunt_tour"]))
+            r = self.hunt_goto(h, p, [], stop_for_target=True)
+            now_pl = read_minimap(*grab_minimap(h))[0] or player
+            moved = dist(now_pl, player)
+            log("HUNT patrol point (%.2f,%.2f): %s, moved %.3f on the minimap" % (p[0], p[1], r, moved))
+            if r == "danger":
+                self.hunt_alarm(h)
+                return True
+            if r in ("combat", "target", "stopped"):
+                return True
+            if moved >= 0.03:
+                st["done"] += 1
+                st["dwell"] = time.time() + 3.0
+                return True
+            player = now_pl
+        return False
+    def w_hunt(self):
+        """Find living bots by their name label, attack the nearest isolated one, fight, loot; with the minimap walk
+        to the next bot when none is in the area."""
+        h = self.game()
+        self.hunt_forbidden_for_zone(h)
+        park = (0.55, 0.935)  # chat area: no hover tooltips while we look at the scene
+        patrol = {}  # state of the patrol tour
+        chase = 0  # approach steps towards bots outside the area since the last target
+        bad, tried = [], []  # (fx, fy, until): spots where an attack did not start a fight / minimap targets done
+        log("HUNT start area=%s gap=%s walk=%s" % (self.cfg["hunt_area"], self.cfg["hunt_gap"], self.cfg["hunt_walk"]))
+        zone0 = grab_zone(h)  # the zone name on top: if it changes we died / left the zone
+        home = read_minimap(*grab_minimap(h))[0]  # where we started, on the minimap
+        self.home = self.safe_pos = home
+        log("HUNT home on minimap: %s" % (home,))
+        while self.alive():
+            if self.hunt_in_combat(h)[0]:  # a bot attacked us (e.g. while walking): fight it
+                self.hunt_say("attacked: fighting")
+                if not self.hunt_fight(h):
+                    return
+                self.hunt_loot(h)
+                continue
+            if self.hunt_zone_changed(h, zone0):
+                return
+            if self.hunt_alarm(h):  # backed off from a deadly bot (or stopped): look again
+                continue
+            hp = read_health(h)
+            if hp < self.cfg["hunt_min_health"]:  # a tough bot left us low: do nothing new until we have healed
+                self.hunt_say("health %d%% is below %d%%: waiting to heal" % (hp * 100, self.cfg["hunt_min_health"] * 100))
+                if time.time() - getattr(self, "_hlog", 0) > 15:
+                    self._hlog = time.time()
+                    log("HUNT health %.0f%% < %.0f%%: waiting" % (hp * 100, self.cfg["hunt_min_health"] * 100))
+                if not self.wait(1.5):
+                    return
+                continue
+            self.hunt_move(h, *park)
+            bad = [b for b in bad if b[2] > time.time()]
+            bots, seen = self.hunt_candidates(h, bad)
+            if not bots:
+                if seen and time.time() - getattr(self, "_clog", 0) > 3:
+                    self._clog = time.time()
+                    log("HUNT no candidate: %d bots on screen, %d in area/near, gap=%.2f, recently failed=%d" % (
+                        self.hunt_counts + (self.cfg["hunt_gap"], len(bad))))
+                if self.cfg["hunt_walk"] and self.hunt_walk(h, tried, bad):
+                    continue
+                if self.cfg["hunt_walk"] and self.hunt_outside and not self.hunt_deadly_near(h, 2.0):
+                    # no lone bot in the area and none on the minimap: walk towards one that is on screen outside it
+                    chase += 1
+                    tgt = min(self.hunt_outside, key=lambda p: (p[0] - 0.5) ** 2 + (p[1] - 0.65) ** 2)
+                    if chase > 4:
+                        bad += [(p[0], p[1], time.time() + 30) for p in self.hunt_outside]
+                        chase = 0
+                    elif self.hunt_approach(h, tgt):
+                        log("HUNT chase %d towards (%.3f,%.3f)" % (chase, tgt[0], tgt[1]))
+                        continue
+                if self.cfg["hunt_walk"] and self.cfg["hunt_patrol"]:
+                    now = time.time()
+                    if now < patrol.get("dwell", 0) or now < patrol.get("rest", 0):
+                        self.hunt_say("patrol: looking around")
+                        if not self.wait(0.8):
+                            return
+                        continue
+                    if self.hunt_patrol_step(h, patrol, home):
+                        continue
+                    if "pts" in patrol:  # tour finished (or nothing reachable): rest at the start, then start over
+                        patrol.pop("pts")
+                        patrol["rest"] = time.time() + 30
+                        log("HUNT patrol: tour finished")
+                        if self.cfg["hunt_home"] and home and self.hunt_go_home(h, home):
+                            continue
+                if self.cfg["hunt_walk"] and self.cfg["hunt_home"] and home and self.hunt_go_home(h, home):
+                    continue
+                self.hunt_say("no bot to attack (on screen %d, in area %d, alone-and-new 0)" % self.hunt_counts)
+                if not self.wait(0.8):
+                    return
+                continue
+            chase = 0
+            target = bots[0]
+            tsig = BOT_SIG.get(target)
+            log("HUNT bots=%d target=(%.3f,%.3f)" % (len(bots), target[0], target[1]))
+            if not self.hunt_engage(h, target):
+                if not self.alive():
+                    return
+                self.note_failed_attack(tsig)
+                log("HUNT no fight started at that spot: ignoring it for 30 s")
+                bad.append((target[0], target[1], time.time() + 30))
+                continue
+            if not self.hunt_fight(h, (target[0], target[1])):
+                return
+            self.hunt_loot(h)  # /loot opens the window whatever the corpse position
+            if not self.wait(0.5):
+                return
+
+
+__all__ = [n for n in list(globals()) if not n.startswith("__")]

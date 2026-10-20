@@ -1,0 +1,438 @@
+"""The control window: autoclick settings, slots, library, hunt area and forbidden zones."""
+import copy, ctypes, json, os, random, re, sys, threading, time
+from ctypes import wintypes
+import tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
+from .config import *
+from .winapi import *
+from .vision import *
+from .minimap import *
+
+
+class Gui:
+    """Control window: autoclick delay, the 9 sequence slots with names, and a library of named sequences."""
+
+    def __init__(self, app):
+        self.app, self.cfg = app, app.cfg
+        w = self.win = tk.Toplevel(app.root)
+        w.title("AutoPrison")
+        w.geometry("780x720")
+        w.minsize(680, 680)
+        w.protocol("WM_DELETE_WINDOW", app.root.destroy)  # closing this window quits the program
+
+        top = ttk.LabelFrame(w, text="Autoclick (menu option 1)")
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        self.delay = tk.StringVar(value=str(int(round(self.cfg["click_interval"] * 1000))))
+        self.jit = tk.StringVar(value=str(int(round(self.cfg["jitter"] * 100))))
+        self.speed = tk.StringVar(value="%g" % self.cfg["speed"])
+        self.settle = tk.StringVar(value=str(int(round(self.cfg["bg_settle"] * 1000))))
+        self.rep = tk.StringVar(value="%g" % max(self.cfg["repeat_interval"], 5.0))
+        for col, (label, var, lo, hi, inc, key) in enumerate((
+                ("Delay between clicks (ms)", self.delay, 10, 60000, 10, "delay"),
+                ("Random variation (Â±%)", self.jit, 0, 90, 5, "jit"),
+                ("Sequence speed (x)", self.speed, 0.1, 8, 0.05, "speed"),
+                ("Background pause before click (ms)", self.settle, 0, 2000, 25, "settle"),
+                ("Auto-fight delay (s, min 5)", self.rep, 5, 300, 0.5, "rep"))):
+            ttk.Label(top, text=label).grid(row=0, column=col, padx=8, pady=(6, 0), sticky="w")
+            sp = ttk.Spinbox(top, from_=lo, to=hi, increment=inc, textvariable=var, width=10,
+                             command=self.apply)
+            sp.grid(row=1, column=col, padx=8, pady=(0, 8), sticky="w")
+            sp.bind("<KeyRelease>", lambda e: self.apply())
+            sp.bind("<FocusOut>", lambda e: self.apply())
+        ttk.Label(top, text="Delay and variation apply to autoclick; speed applies to recorded sequences.",
+                  foreground="gray").grid(row=2, column=0, columnspan=4, padx=8, pady=(0, 6), sticky="w")
+        self.bgvar = tk.BooleanVar(value=bool(self.cfg["background"]))
+        ttk.Checkbutton(top, variable=self.bgvar, command=self.apply, text=(
+            "Background mode (experimental): clicks are sent to the game window without moving your mouse, "
+            "so you can use other programs. Keep the game window open, not minimized. F12 stops from anywhere."
+        )).grid(row=3, column=0, columnspan=4, padx=8, pady=(0, 8), sticky="w")
+
+        hunt = ttk.LabelFrame(w, text="Auto-hunt area (menu option 7: bots outside this rectangle are ignored)")
+        hunt.pack(fill="x", padx=10, pady=4)
+        self.cv = tk.Canvas(hunt, width=240, height=135, bg="#1b1b1b", highlightthickness=1,
+                            highlightbackground="#666")
+        self.cv.grid(row=0, column=0, rowspan=3, padx=8, pady=8)
+        self.harea = [tk.StringVar() for _ in range(4)]
+        for col, (label, var) in enumerate(zip(("Left (%)", "Top (%)", "Right (%)", "Bottom (%)"), self.harea)):
+            ttk.Label(hunt, text=label).grid(row=0, column=1 + col, padx=6, pady=(8, 0), sticky="w")
+            sp = ttk.Spinbox(hunt, from_=0, to=100, increment=1, textvariable=var, width=7, command=self.apply_area)
+            sp.grid(row=1, column=1 + col, padx=6, sticky="w")
+            sp.bind("<KeyRelease>", lambda e: self.apply_area())
+        ttk.Button(hunt, text="Clear area", command=self.clear_area).grid(row=1, column=5, padx=6, sticky="w")
+        self.hinfo = ttk.Label(hunt, foreground="gray", wraplength=470, justify="left")
+        self.hinfo.grid(row=2, column=1, columnspan=5, padx=6, pady=(4, 8), sticky="w")
+        self.gap = tk.StringVar(value="%g" % round(self.cfg["hunt_gap"] * 100, 1))
+        self.mgap = tk.StringVar(value="%g" % round(self.cfg["hunt_map_gap"] * 100, 1))
+        opts = ttk.Frame(hunt)
+        opts.grid(row=3, column=0, columnspan=6, padx=8, pady=(0, 8), sticky="w")
+        ttk.Label(opts, text="Min distance between bots, screen (% of width)").grid(row=0, column=0, sticky="w")
+        ttk.Spinbox(opts, from_=0, to=100, increment=1, textvariable=self.gap, width=6, command=self.apply).grid(
+            row=0, column=1, padx=(6, 18))
+        ttk.Label(opts, text="on the minimap (%)").grid(row=0, column=2, sticky="w")
+        ttk.Spinbox(opts, from_=0, to=100, increment=1, textvariable=self.mgap, width=6, command=self.apply).grid(
+            row=0, column=3, padx=(6, 0))
+        self.hmin = tk.StringVar(value="%g" % round(self.cfg["hunt_min_health"] * 100))
+        ttk.Label(opts, text="Wait to attack while health is below (%)").grid(row=4, column=0, columnspan=2, sticky="w",
+                                                                              pady=(6, 0))
+        ttk.Spinbox(opts, from_=0, to=100, increment=5, textvariable=self.hmin, width=6, command=self.apply).grid(
+            row=4, column=2, padx=(6, 0), pady=(6, 0), sticky="w")
+        self.walkvar = tk.BooleanVar(value=bool(self.cfg["hunt_walk"]))
+        ttk.Checkbutton(opts, variable=self.walkvar, command=self.apply, text=(
+            "Walk to the next lone bot by clicking the minimap when none is in the area "
+            "(avoids the fixed orange points = exits)")).grid(row=1, column=0, columnspan=4, pady=(6, 0), sticky="w")
+        self.patrolvar = tk.BooleanVar(value=bool(self.cfg["hunt_patrol"]))
+        ttk.Checkbutton(opts, variable=self.patrolvar, command=self.apply, text=(
+            "Patrol: when nothing is found, walk a tour of minimap points (bots show on the minimap only after "
+            "moving)")).grid(row=3, column=0, columnspan=4, pady=(2, 0), sticky="w")
+        self.destroyvar = tk.BooleanVar(value=bool(self.cfg["hunt_destroy_unique"]))
+        ttk.Checkbutton(opts, variable=self.destroyvar, command=self.apply, text=(
+            "Loot: destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up"
+        )).grid(row=5, column=0, columnspan=4, pady=(2, 0), sticky="w")
+        zrow = ttk.Frame(opts)
+        zrow.grid(row=6, column=0, columnspan=4, pady=(6, 0), sticky="w")
+        ttk.Button(zrow, text="Forbidden zones on the minimapâ€¦", command=self.zones_dialog).pack(side="left")
+        self.zinfo = ttk.Label(zrow, foreground="gray")
+        self.zinfo.pack(side="left", padx=8)
+        self.zones_label()
+        self.homevar = tk.BooleanVar(value=bool(self.cfg["hunt_home"]))
+        ttk.Checkbutton(opts, variable=self.homevar, command=self.apply, text=(
+            "When no lone bot is left, walk back to the starting point of the hunt")).grid(
+            row=2, column=0, columnspan=4, pady=(2, 0), sticky="w")
+        for e in opts.winfo_children():
+            if isinstance(e, ttk.Spinbox):
+                e.bind("<KeyRelease>", lambda ev: self.apply())
+        self.hunt_last = "unset"
+        self.hunt_sync()
+
+        body = ttk.Frame(w)
+        body.pack(fill="both", expand=True, padx=10, pady=4)
+        body.columnconfigure((0, 1), weight=1, uniform="c")
+        body.rowconfigure(0, weight=1)
+
+        left = ttk.LabelFrame(body, text="Slots (keys 1-9 in game)")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.slots = self.tree(left, ("slot", "name", "clicks"), ("Slot", "Name", "Clicks"), (45, 190, 55))
+        self.slots.bind("<Double-1>", lambda e: self.rename_slot())
+        bar = ttk.Frame(left)
+        bar.pack(fill="x", padx=6, pady=6)
+        for text, cmd in (("Rename", self.rename_slot), ("Clear", self.clear_slot),
+                          ("Save to library â†’", self.to_library)):
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
+
+        right = ttk.LabelFrame(body, text="Library (saved sequences)")
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        self.lib = self.tree(right, ("name", "clicks"), ("Name", "Clicks"), (210, 55))
+        self.lib.bind("<Double-1>", lambda e: self.rename_lib())
+        bar = ttk.Frame(right)
+        bar.pack(fill="x", padx=6, pady=6)
+        for text, cmd in (("â† Load into slot", self.from_library), ("Rename", self.rename_lib),
+                          ("Delete", self.delete_lib)):
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
+
+        ttk.Label(w, foreground="gray", wraplength=720, text=(
+            "Record in game: TAB, 2, then 1-9. Play: TAB, 3, then 1-9. Name a slot, save it to the library, "
+            "and load it back into any slot later.")).pack(fill="x", padx=12, pady=(2, 10))
+        self.refresh()
+
+    @staticmethod
+    def tree(parent, cols, heads, widths):
+        t = ttk.Treeview(parent, columns=cols, show="headings", selectmode="browse", height=9)
+        for c, h, wd in zip(cols, heads, widths):
+            t.heading(c, text=h)
+            t.column(c, width=wd, anchor="w" if c == "name" else "center")
+        t.pack(fill="both", expand=True, padx=6, pady=(6, 0))
+        return t
+
+    # -- settings
+    def apply(self):
+        self.cfg["background"] = bool(self.bgvar.get())
+        try:
+            self.cfg["click_interval"] = min(max(float(self.delay.get()), 10), 60000) / 1000
+            self.cfg["jitter"] = min(max(float(self.jit.get()), 0), 90) / 100
+            self.cfg["speed"] = min(max(float(self.speed.get().replace(",", ".")), 0.1), 8)
+            self.cfg["bg_settle"] = min(max(float(self.settle.get()), 0), 2000) / 1000
+            self.cfg["repeat_interval"] = min(max(float(self.rep.get().replace(",", ".")), 5), 300)
+            self.cfg["hunt_gap"] = min(max(float(self.gap.get().replace(",", ".")), 0), 100) / 100
+            self.cfg["hunt_map_gap"] = min(max(float(self.mgap.get().replace(",", ".")), 0), 100) / 100
+            self.cfg["hunt_min_health"] = min(max(float(self.hmin.get().replace(",", ".")), 0), 100) / 100
+            self.cfg["hunt_destroy_unique"] = bool(self.destroyvar.get())
+            self.cfg["hunt_walk"] = bool(self.walkvar.get())
+            self.cfg["hunt_home"] = bool(self.homevar.get())
+            self.cfg["hunt_patrol"] = bool(self.patrolvar.get())
+        except ValueError:
+            return  # half-typed value: ignore until it is a number
+        save(self.cfg)
+
+    # -- auto-hunt area (the in-game setup, option 7, writes the same cfg value)
+    def hunt_sync(self):
+        cur = self.cfg.get("hunt_area")
+        if cur != self.hunt_last:
+            self.hunt_last = list(cur) if cur else cur
+            for var, v in zip(self.harea, cur or ("", "", "", "")):
+                var.set("" if v == "" else "%g" % round(v * 100, 2))
+        self.draw_area()
+        self.win.after(500, self.hunt_sync)
+
+    def draw_area(self):
+        cv, cur = self.cv, self.cfg.get("hunt_area")
+        cv.delete("all")
+        cv.create_text(120, 67, text="game window", fill="#555")
+        if cur:
+            cv.create_rectangle(cur[0] * 240, cur[1] * 135, cur[2] * 240, cur[3] * 135,
+                                outline="#ffe14d", width=2, fill="#4d4410", stipple="gray50")
+            text = "Saved: left %.1f%%, top %.1f%%, right %.1f%%, bottom %.1f%% of the game window." % tuple(
+                v * 100 for v in cur)
+            g = find_game()
+            if g:
+                _, _, w, hh = client_rect(g)
+                text += " Now (%dx%d): x %d-%d, y %d-%d px." % (
+                    w, hh, cur[0] * w, cur[2] * w, cur[1] * hh, cur[3] * hh)
+        else:
+            text = "No area saved yet. In game: TAB, 7, put the mouse on a corner and press F9 (top-left) and F10 (bottom-right)."
+        self.hinfo.config(text=text)
+
+    def apply_area(self):
+        try:
+            l, t, r, b = (min(max(float(v.get().replace(",", ".")), 0), 100) / 100 for v in self.harea)
+        except ValueError:
+            return  # half-typed value
+        if r - l < 0.03 or b - t < 0.03:
+            return
+        self.cfg["hunt_area"] = [round(l, 4), round(t, 4), round(r, 4), round(b, 4)]
+        self.hunt_last = list(self.cfg["hunt_area"])
+        save(self.cfg)
+        self.draw_area()
+
+    def clear_area(self):
+        self.cfg["hunt_area"] = None
+        save(self.cfg)
+        self.hunt_sync_now()
+
+    def hunt_sync_now(self):
+        self.hunt_last = "unset"
+        cur = self.cfg.get("hunt_area")
+        self.hunt_last = list(cur) if cur else cur
+        for var in self.harea:
+            var.set("")
+        self.draw_area()
+
+    # -- forbidden zones, drawn on a snapshot of the minimap
+    def zones_label(self):
+        n = len(self.cfg.get("hunt_forbidden") or [])
+        self.zinfo.config(text="%d zone%s: the hunt never walks into them" % (n, "" if n == 1 else "s") if n
+                          else "none: the hunt only avoids red diamonds and visors")
+
+    def zones_dialog(self):
+        CW = 460
+        g = find_game()
+        mx, my, mw, mh = map_area(g) if g else MAP_AREA
+        if g:
+            _, _, gw, gh = client_rect(g)
+            CH = int(CW * (mh * gh) / (mw * gw))
+        else:
+            CH = int(CW * 0.97)
+        d = tk.Toplevel(self.win)
+        d.title("Forbidden zones on the minimap")
+        d.transient(self.win)
+        ttk.Label(d, wraplength=CW, justify="left", text=(
+            "Drag on the map to mark an area the character must never enter or cross (red). The hunt then walks, "
+            "patrols and picks targets around it. Use Capture with the game visible to get the current minimap.")
+                  ).pack(padx=10, pady=(10, 4))
+        cv = tk.Canvas(d, width=CW, height=CH, bg="#1b1b1b", highlightthickness=1, highlightbackground="#666")
+        cv.pack(padx=10, pady=4)
+        st = {"img": None, "drag": None, "map": None}
+
+        def redraw():
+            cv.delete("all")
+            if st["img"]:
+                cv.create_image(0, 0, anchor="nw", image=st["img"])
+            else:
+                cv.create_text(CW // 2, CH // 2, text="no snapshot: press Capture", fill="#777")
+            for x0, y0, x1, y1 in self.cfg.get("hunt_forbidden") or []:
+                cv.create_rectangle(x0 * CW, y0 * CH, x1 * CW, y1 * CH, outline="#ff4040", width=2,
+                                    fill="#ff2020", stipple="gray50")
+            self.zones_label()
+
+        def store(rects):
+            self.cfg["hunt_forbidden"] = rects
+            if st["map"]:  # the zones belong to the map they were drawn on
+                self.cfg["hunt_forbidden_map"] = st["map"]
+            save(self.cfg)
+            redraw()
+
+        def clamp(v, hi):
+            return round(min(max(v, 0), hi) / hi, 4)
+
+        def press(e):
+            if not st["map"]:  # a zone must be tied to the map it is drawn on
+                return messagebox.showinfo("AutoPrison", "Press Capture first: the zones belong to that map.", parent=d)
+            st["drag"] = (e.x, e.y)
+
+        def move(e):
+            cv.delete("drag")
+            if st["drag"]:
+                cv.create_rectangle(st["drag"][0], st["drag"][1], e.x, e.y, outline="#ffe14d", dash=(3, 2), tags="drag")
+
+        def release(e):
+            if not st["drag"]:
+                return
+            (sx, sy), st["drag"] = st["drag"], None
+            x0, x1 = sorted((clamp(sx, CW), clamp(e.x, CW)))
+            y0, y1 = sorted((clamp(sy, CH), clamp(e.y, CH)))
+            cv.delete("drag")
+            if x1 - x0 >= 0.03 and y1 - y0 >= 0.03:
+                store((self.cfg.get("hunt_forbidden") or []) + [[x0, y0, x1, y1]])
+
+        def undo():
+            store((self.cfg.get("hunt_forbidden") or [])[:-1])
+
+        def clear():
+            store([])
+
+        def snap():
+            gg = find_game()
+            if not gg or u32.IsIconic(gg):
+                return messagebox.showinfo("AutoPrison", "Open the game window (not minimized) first.", parent=d)
+            d.withdraw()
+            self.win.withdraw()
+
+            def take():
+                try:
+                    buf, rw, rh = grab_minimap(gg)
+                    out = bytearray(b"P6\n%d %d\n255\n" % (CW, CH))
+                    for y in range(CH):
+                        row = (y * rh // CH) * rw
+                        for x in range(CW):
+                            i = (row + x * rw // CW) * 4
+                            out += bytes((buf[i + 2], buf[i + 1], buf[i]))
+                    st["img"] = tk.PhotoImage(data=bytes(out))
+                    st["map"] = grab_zone(gg)
+                finally:
+                    self.win.deiconify()
+                    d.deiconify()
+                    redraw()
+            self.win.after(2500, take)
+
+        cv.bind("<ButtonPress-1>", press)
+        cv.bind("<B1-Motion>", move)
+        cv.bind("<ButtonRelease-1>", release)
+        bar = ttk.Frame(d)
+        bar.pack(pady=(4, 10))
+        for text, cmd in (("Capture minimap (2.5 s)", snap), ("Undo last", undo), ("Clear all", clear),
+                          ("Close", d.destroy)):
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=4)
+        redraw()
+
+    # -- helpers
+    def sel(self, tree):
+        s = tree.selection()
+        return tree.item(s[0], "values")[0] if s else None
+
+    def refresh(self):
+        keep_s, keep_l = self.sel(self.slots), self.sel(self.lib)
+        self.slots.delete(*self.slots.get_children())
+        self.lib.delete(*self.lib.get_children())
+        for n in range(1, 10):
+            s = str(n)
+            evs = self.cfg["sequences"].get(s)
+            self.slots.insert("", "end", iid=s, values=(
+                s, self.cfg["names"].get(s, "") if evs else "", self.clicks(evs) if evs else "â€”"))
+        for name in sorted(self.cfg["library"], key=str.lower):
+            self.lib.insert("", "end", iid=name, values=(name, self.clicks(self.cfg["library"][name])))
+        if keep_s and self.slots.exists(keep_s):
+            self.slots.selection_set(keep_s)
+        if keep_l and self.lib.exists(keep_l):
+            self.lib.selection_set(keep_l)
+
+    @staticmethod
+    def clicks(evs):
+        return sum(1 for e in evs if "wait" not in e)
+
+    def ask(self, title, prompt, initial=""):
+        v = simpledialog.askstring(title, prompt, initialvalue=initial, parent=self.win)
+        return v.strip() if v and v.strip() else None
+
+    def busy(self):
+        if self.app.state in ("REC", "RUN"):
+            messagebox.showinfo("AutoPrison", "Stop the recording or playback first.", parent=self.win)
+            return True
+        return False
+
+    # -- slot actions
+    def rename_slot(self):
+        s = self.sel(self.slots)
+        if not s or s not in self.cfg["sequences"]:
+            return messagebox.showinfo("AutoPrison", "Select a slot that has a recorded sequence.", parent=self.win)
+        name = self.ask("Rename", "Name for slot %s:" % s, self.cfg["names"].get(s, ""))
+        if name:
+            self.cfg["names"][s] = name
+            save(self.cfg)
+            self.refresh()
+
+    def clear_slot(self):
+        s = self.sel(self.slots)
+        if self.busy() or not s or s not in self.cfg["sequences"]:
+            return
+        if messagebox.askyesno("Clear slot", "Clear slot %s? Save it to the library first to keep it." % s,
+                               parent=self.win):
+            self.cfg["sequences"].pop(s, None)
+            self.cfg["names"].pop(s, None)
+            save(self.cfg)
+            self.refresh()
+
+    def to_library(self):
+        s = self.sel(self.slots)
+        if not s or s not in self.cfg["sequences"]:
+            return messagebox.showinfo("AutoPrison", "Select a slot that has a recorded sequence.", parent=self.win)
+        name = self.cfg["names"].get(s) or self.ask("Save to library", "Name for this sequence:", "Sequence %s" % s)
+        if not name:
+            return
+        if name in self.cfg["library"] and not messagebox.askyesno(
+                "Overwrite", "'%s' already exists in the library. Overwrite it?" % name, parent=self.win):
+            return
+        self.cfg["names"][s] = name
+        self.cfg["library"][name] = copy.deepcopy(self.cfg["sequences"][s])
+        save(self.cfg)
+        self.refresh()
+
+    # -- library actions
+    def from_library(self):
+        name, s = self.sel(self.lib), self.sel(self.slots)
+        if self.busy():
+            return
+        if not name or not s:
+            return messagebox.showinfo("AutoPrison", "Select a library entry and a target slot.", parent=self.win)
+        if s in self.cfg["sequences"] and not messagebox.askyesno(
+                "Replace", "Slot %s already has a sequence. Replace it?" % s, parent=self.win):
+            return
+        self.cfg["sequences"][s] = copy.deepcopy(self.cfg["library"][name])
+        self.cfg["names"][s] = name
+        save(self.cfg)
+        self.refresh()
+
+    def rename_lib(self):
+        old = self.sel(self.lib)
+        if not old:
+            return
+        new = self.ask("Rename", "New name:", old)
+        if not new or new == old:
+            return
+        if new in self.cfg["library"]:
+            return messagebox.showinfo("AutoPrison", "A library entry named '%s' already exists." % new,
+                                       parent=self.win)
+        self.cfg["library"][new] = self.cfg["library"].pop(old)
+        for s, n in self.cfg["names"].items():
+            if n == old:
+                self.cfg["names"][s] = new
+        save(self.cfg)
+        self.refresh()
+
+    def delete_lib(self):
+        name = self.sel(self.lib)
+        if name and messagebox.askyesno("Delete", "Delete '%s' from the library?" % name, parent=self.win):
+            self.cfg["library"].pop(name, None)
+            save(self.cfg)
+            self.refresh()
+
+
+__all__ = [n for n in list(globals()) if not n.startswith("__")]

@@ -23,6 +23,10 @@
     with Yes to destroy it and carry on with the items below. Can be turned off.
 - **Fights**: first two turns are manual attacks (click on the bot), then Ctrl+T if action points are left, then Ctrl+R.
   If Ctrl+R cannot repeat (the bot it repeated on is dead and a second one is in the fight) it attacks by hand again.
+- **Talk-only NPCs** (e.g. "hablar con"): a target whose attack fails twice is recognised by the shape of its name and
+  ignored for 30 minutes.
+- **Forbidden zones are tied to the map** they were drawn on and ignored in other zones.
+- **Minimap size follows the zone** (it is shorter in some rooms), so clicks never land outside it.
 - **Log rotation**: `autoprison.log` is rotated at every start, the last 5 are kept.
 
 ### Changed
@@ -31,7 +35,11 @@
 - Turn detection accepts a thinner green ring and tolerates it pulsing.
 - Minimum distance between bots on screen: 7% (was 12%, which skipped bots 10% apart).
 
+- The code is split into the `prisonbot` package (config, winapi, vision, minimap, hunt, gui, app); `autoprison.py`
+  is only the entry point.
+
 ### Fixed
+- Fights started by a bot: the bot is found by its health bar when its name changes colour, so the manual attacks are sent.
 - False "zone changed" stops (name bar moving or scrolling).
 - Bots outside the area were never attacked after walking next to them; attacks now wait while the character walks to
   the target.
