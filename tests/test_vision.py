@@ -1,0 +1,102 @@
+import pytest
+
+from conftest import blank, paint
+from prisonbot import vision
+
+LAVENDER = (170, 170, 190)
+RED = (200, 20, 20)
+YELLOW = (240, 240, 20)
+
+
+def test_health_from_buf_half_bar():
+    w, h, cw = 200, 20, 2000
+    buf = blank(w, h)
+    full = int(vision.HEALTH_LEN * cw)
+    paint(buf, w, 10, 8, 10 + full // 2, 11, RED)
+    assert vision.health_from_buf(buf, w, h, cw) == pytest.approx(0.5, abs=0.05)
+
+
+def test_health_from_buf_empty():
+    assert vision.health_from_buf(blank(100, 10), 100, 10, 2000) == 0.0
+
+
+def test_find_labels_finds_lavender_block_only():
+    w, h = 400, 200
+    buf = blank(w, h)
+    paint(buf, w, 100, 50, 160, 60, LAVENDER)
+    paint(buf, w, 300, 150, 303, 152, LAVENDER)  # too small: noise
+    labels = vision.find_labels(buf, w, h, 1.0)
+    assert len(labels) == 1
+    x, y, _ = labels[0]
+    assert x == pytest.approx(130 / w, abs=0.03)
+    assert y == pytest.approx(55 / h, abs=0.05)
+
+
+def test_sig_similar_same_and_different():
+    a = frozenset((x, y) for x in range(0, 40, 2) for y in range(0, 8, 2))
+    b = frozenset((x, y) for x in range(0, 40, 4) for y in range(0, 8, 4))
+    assert vision.sig_similar(a, a)
+    assert not vision.sig_similar(a, b)
+    assert not vision.sig_similar(a, None)
+
+
+def test_red_line_is_error_needs_a_long_red_line():
+    w, h = 1000, 30
+    long_line = blank(w, h)
+    paint(long_line, w, 0, 5, 700, 25, (230, 10, 10))
+    short_line = blank(w, h)
+    paint(short_line, w, 0, 5, 80, 25, (230, 10, 10))
+    assert vision.red_line_is_error(long_line, w, h, 1000)
+    assert not vision.red_line_is_error(short_line, w, h, 1000)
+
+
+class FakeScreen:
+    """A 2000x1000 client area whose pixels come from a buffer; grab() cuts out the requested rectangle."""
+
+    def __init__(self, monkeypatch, w=2000, h=1000):
+        self.w, self.h = w, h
+        self.buf = blank(w, h)
+        monkeypatch.setattr(vision, "client_rect", lambda hw: (0, 0, w, h))
+        monkeypatch.setattr(vision, "grab", self.grab)
+
+    def grab(self, x, y, rw, rh):
+        out = bytearray(rw * rh * 4)
+        for j in range(rh):
+            s = ((y + j) * self.w + x) * 4
+            out[j * rw * 4:(j + 1) * rw * 4] = self.buf[s:s + rw * 4]
+        return bytes(out)
+
+    def paint(self, x0, y0, x1, y1, rgb):
+        paint(self.buf, self.w, x0, y0, x1, y1, rgb)
+
+
+def test_find_bars_returns_body_below_the_bar(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    s.paint(900, 200, 990, 207, RED)  # an enemy bar, 90 px wide
+    bars = vision.find_bars(0)
+    assert len(bars) == 1
+    x, y = bars[0]
+    assert x == pytest.approx(0.4725, abs=0.01)
+    assert y == pytest.approx(0.2035 + vision.BAR_DROP, abs=0.01)
+
+
+def test_find_bars_ignores_own_bar(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    s.paint(900, 200, 990, 207, RED)  # enemy
+    s.paint(1100, 400, 1190, 407, RED)  # own bar ...
+    s.paint(1110, 370, 1180, 385, YELLOW)  # ... under the yellow own label
+    bars = vision.find_bars(0)
+    assert len(bars) == 1 and bars[0][0] < 0.5
+
+
+def test_find_bars_nothing_on_plain_screen(monkeypatch):
+    FakeScreen(monkeypatch)
+    assert vision.find_bars(0) == []
+
+
+def test_detect_combat_banner(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    fx, fy, fw, fh = vision.DETECT["combat"][:4]
+    assert not vision.detect(0, "combat")[0]
+    s.paint(int(fx * 2000), int(fy * 1000), int((fx + fw) * 2000), int((fy + fh) * 1000), (220, 40, 40))
+    assert vision.detect(0, "combat")[0]
