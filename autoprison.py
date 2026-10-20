@@ -1139,6 +1139,7 @@ class App:
                     log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
                     manual, end_turn = self.OPENING, False
                 if mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
+                    log("HUNT health %.0f%% in the fight" % (read_health(h) * 100))
                     if manual > 0:
                         log("HUNT my turn (buttons %.3f) -> manual attack (%d left)" % (ft, manual))
                         self.hunt_say("my turn: attacking (click on the bot)")
