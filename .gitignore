@@ -4,3 +4,4 @@ dist/
 *.spec
 autoprison_data.json
 autoprison.log
+autoprison.log.*
