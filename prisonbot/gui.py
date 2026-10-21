@@ -20,92 +20,106 @@ class Gui:
         w.minsize(680, 680)
         w.protocol("WM_DELETE_WINDOW", app.root.destroy)  # closing this window quits the program
 
-        top = ttk.LabelFrame(w, text="Autoclick (menu option 1)")
+        nb = self.nb = ttk.Notebook(w)
+        nb.pack(fill="both", expand=True, padx=8, pady=8)
+        tab_click, tab_hunt, tab_seq = (ttk.Frame(nb) for _ in range(3))
+        nb.add(tab_click, text="  Autoclick  ")
+        nb.add(tab_hunt, text="  Auto-hunt  ")
+        nb.add(tab_seq, text="  Sequences  ")
+
+        # ---- tab 1: autoclick -------------------------------------------------------------------------------
+        top = ttk.LabelFrame(tab_click, text="Autoclick (menu option 1)")
         top.pack(fill="x", padx=10, pady=(10, 4))
         self.delay = tk.StringVar(value=str(int(round(self.cfg["click_interval"] * 1000))))
         self.jit = tk.StringVar(value=str(int(round(self.cfg["jitter"] * 100))))
         self.speed = tk.StringVar(value="%g" % self.cfg["speed"])
         self.settle = tk.StringVar(value=str(int(round(self.cfg["bg_settle"] * 1000))))
         self.rep = tk.StringVar(value="%g" % max(self.cfg["repeat_interval"], 5.0))
-        for col, (label, var, lo, hi, inc, key) in enumerate((
-                ("Delay between clicks (ms)", self.delay, 10, 60000, 10, "delay"),
-                ("Random variation (Â±%)", self.jit, 0, 90, 5, "jit"),
-                ("Sequence speed (x)", self.speed, 0.1, 8, 0.05, "speed"),
-                ("Background pause before click (ms)", self.settle, 0, 2000, 25, "settle"),
-                ("Auto-fight delay (s, min 5)", self.rep, 5, 300, 0.5, "rep"))):
+        for col, (label, var, lo, hi, inc) in enumerate((
+                ("Delay between clicks (ms)", self.delay, 10, 60000, 10),
+                ("Random variation (±%)", self.jit, 0, 90, 5),
+                ("Sequence speed (x)", self.speed, 0.1, 8, 0.05),
+                ("Auto-fight delay (s, min 5)", self.rep, 5, 300, 0.5))):
             ttk.Label(top, text=label).grid(row=0, column=col, padx=8, pady=(6, 0), sticky="w")
-            sp = ttk.Spinbox(top, from_=lo, to=hi, increment=inc, textvariable=var, width=10,
-                             command=self.apply)
-            sp.grid(row=1, column=col, padx=8, pady=(0, 8), sticky="w")
-            sp.bind("<KeyRelease>", lambda e: self.apply())
-            sp.bind("<FocusOut>", lambda e: self.apply())
+            self.spin(top, var, lo, hi, inc, 10, self.apply).grid(row=1, column=col, padx=8, pady=(0, 8), sticky="w")
         ttk.Label(top, text="Delay and variation apply to autoclick; speed applies to recorded sequences.",
                   foreground="gray").grid(row=2, column=0, columnspan=4, padx=8, pady=(0, 6), sticky="w")
-        self.bgvar = tk.BooleanVar(value=bool(self.cfg["background"]))
-        ttk.Checkbutton(top, variable=self.bgvar, command=self.apply, text=(
-            "Background mode (experimental): clicks are sent to the game window without moving your mouse, "
-            "so you can use other programs. Keep the game window open, not minimized. F12 stops from anywhere."
-        )).grid(row=3, column=0, columnspan=4, padx=8, pady=(0, 8), sticky="w")
 
-        hunt = ttk.LabelFrame(w, text="Auto-hunt area (menu option 7: bots outside this rectangle are ignored)")
-        hunt.pack(fill="x", padx=10, pady=4)
+        bgf = ttk.LabelFrame(tab_click, text="Background mode (experimental)")
+        bgf.pack(fill="x", padx=10, pady=4)
+        self.bgvar = tk.BooleanVar(value=bool(self.cfg["background"]))
+        ttk.Checkbutton(bgf, variable=self.bgvar, command=self.apply, text=(
+            "Send the clicks to the game window without moving your mouse, so you can use other programs.\n"
+            "Keep the game window open, not minimized. F12 stops from anywhere.")).grid(
+            row=0, column=0, columnspan=2, padx=8, pady=(6, 4), sticky="w")
+        ttk.Label(bgf, text="Pause before each click (ms)").grid(row=1, column=0, padx=8, pady=(0, 8), sticky="w")
+        self.spin(bgf, self.settle, 0, 2000, 25, 10, self.apply).grid(row=1, column=1, padx=8, pady=(0, 8), sticky="w")
+
+        # ---- tab 2: auto-hunt -------------------------------------------------------------------------------
+        hunt = ttk.LabelFrame(tab_hunt, text="Area (bots outside this rectangle are ignored)")
+        hunt.pack(fill="x", padx=10, pady=(10, 4))
         self.cv = tk.Canvas(hunt, width=240, height=135, bg="#1b1b1b", highlightthickness=1,
                             highlightbackground="#666")
         self.cv.grid(row=0, column=0, rowspan=3, padx=8, pady=8)
         self.harea = [tk.StringVar() for _ in range(4)]
         for col, (label, var) in enumerate(zip(("Left (%)", "Top (%)", "Right (%)", "Bottom (%)"), self.harea)):
             ttk.Label(hunt, text=label).grid(row=0, column=1 + col, padx=6, pady=(8, 0), sticky="w")
-            sp = ttk.Spinbox(hunt, from_=0, to=100, increment=1, textvariable=var, width=7, command=self.apply_area)
-            sp.grid(row=1, column=1 + col, padx=6, sticky="w")
-            sp.bind("<KeyRelease>", lambda e: self.apply_area())
+            self.spin(hunt, var, 0, 100, 1, 7, self.apply_area).grid(row=1, column=1 + col, padx=6, sticky="w")
         ttk.Button(hunt, text="Clear area", command=self.clear_area).grid(row=1, column=5, padx=6, sticky="w")
         self.hinfo = ttk.Label(hunt, foreground="gray", wraplength=470, justify="left")
         self.hinfo.grid(row=2, column=1, columnspan=5, padx=6, pady=(4, 8), sticky="w")
+
         self.gap = tk.StringVar(value="%g" % round(self.cfg["hunt_gap"] * 100, 1))
         self.mgap = tk.StringVar(value="%g" % round(self.cfg["hunt_map_gap"] * 100, 1))
-        opts = ttk.Frame(hunt)
-        opts.grid(row=3, column=0, columnspan=6, padx=8, pady=(0, 8), sticky="w")
-        ttk.Label(opts, text="Min distance between bots, screen (% of width)").grid(row=0, column=0, sticky="w")
-        ttk.Spinbox(opts, from_=0, to=100, increment=1, textvariable=self.gap, width=6, command=self.apply).grid(
-            row=0, column=1, padx=(6, 18))
-        ttk.Label(opts, text="on the minimap (%)").grid(row=0, column=2, sticky="w")
-        ttk.Spinbox(opts, from_=0, to=100, increment=1, textvariable=self.mgap, width=6, command=self.apply).grid(
-            row=0, column=3, padx=(6, 0))
         self.hmin = tk.StringVar(value="%g" % round(self.cfg["hunt_min_health"] * 100))
-        ttk.Label(opts, text="Wait to attack while health is below (%)").grid(row=4, column=0, columnspan=2, sticky="w",
-                                                                              pady=(6, 0))
-        ttk.Spinbox(opts, from_=0, to=100, increment=5, textvariable=self.hmin, width=6, command=self.apply).grid(
-            row=4, column=2, padx=(6, 0), pady=(6, 0), sticky="w")
+        self.lootwait = tk.StringVar(value="%g" % self.cfg.get("loot_again_delay", 2.0))
         self.walkvar = tk.BooleanVar(value=bool(self.cfg["hunt_walk"]))
-        ttk.Checkbutton(opts, variable=self.walkvar, command=self.apply, text=(
-            "Walk to the next lone bot by clicking the minimap when none is in the area "
-            "(avoids the fixed orange points = exits)")).grid(row=1, column=0, columnspan=4, pady=(6, 0), sticky="w")
         self.patrolvar = tk.BooleanVar(value=bool(self.cfg["hunt_patrol"]))
-        ttk.Checkbutton(opts, variable=self.patrolvar, command=self.apply, text=(
-            "Patrol: when nothing is found, walk a tour of minimap points (bots show on the minimap only after "
-            "moving)")).grid(row=3, column=0, columnspan=4, pady=(2, 0), sticky="w")
+        self.homevar = tk.BooleanVar(value=bool(self.cfg["hunt_home"]))
         self.destroyvar = tk.BooleanVar(value=bool(self.cfg["hunt_destroy_unique"]))
-        ttk.Checkbutton(opts, variable=self.destroyvar, command=self.apply, text=(
-            "Loot: destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up"
-        )).grid(row=5, column=0, columnspan=4, pady=(2, 0), sticky="w")
-        zrow = ttk.Frame(opts)
-        zrow.grid(row=6, column=0, columnspan=4, pady=(6, 0), sticky="w")
-        ttk.Button(zrow, text="Forbidden zones on the minimapâ€¦", command=self.zones_dialog).pack(side="left")
+
+        pick = ttk.LabelFrame(tab_hunt, text="Choosing bots")
+        pick.pack(fill="x", padx=10, pady=4)
+        ttk.Label(pick, text="Min distance between bots, screen (% of width)").grid(
+            row=0, column=0, padx=8, pady=(6, 6), sticky="w")
+        self.spin(pick, self.gap, 0, 100, 1, 6, self.apply).grid(row=0, column=1, padx=(0, 18))
+        ttk.Label(pick, text="on the minimap (%)").grid(row=0, column=2, sticky="w")
+        self.spin(pick, self.mgap, 0, 100, 1, 6, self.apply).grid(row=0, column=3, padx=(6, 8))
+
+        move = ttk.LabelFrame(tab_hunt, text="Movement")
+        move.pack(fill="x", padx=10, pady=4)
+        for text, var in (
+                ("Walk to the next lone bot by clicking the minimap when none is in the area "
+                 "(avoids the fixed orange points = exits)", self.walkvar),
+                ("Patrol: when nothing is found, walk a tour of minimap points (bots show on the minimap only "
+                 "after moving)", self.patrolvar),
+                ("When no lone bot is left, walk back to the starting point of the hunt", self.homevar)):
+            ttk.Checkbutton(move, variable=var, command=self.apply, text=text).pack(anchor="w", padx=8, pady=(4, 0))
+        zrow = ttk.Frame(move)
+        zrow.pack(anchor="w", padx=8, pady=(6, 8))
+        ttk.Button(zrow, text="Forbidden zones on the minimap…", command=self.zones_dialog).pack(side="left")
         self.zinfo = ttk.Label(zrow, foreground="gray")
         self.zinfo.pack(side="left", padx=8)
         self.zones_label()
-        self.homevar = tk.BooleanVar(value=bool(self.cfg["hunt_home"]))
-        ttk.Checkbutton(opts, variable=self.homevar, command=self.apply, text=(
-            "When no lone bot is left, walk back to the starting point of the hunt")).grid(
-            row=2, column=0, columnspan=4, pady=(2, 0), sticky="w")
-        for e in opts.winfo_children():
-            if isinstance(e, ttk.Spinbox):
-                e.bind("<KeyRelease>", lambda ev: self.apply())
+
+        care = ttk.LabelFrame(tab_hunt, text="Health and loot")
+        care.pack(fill="x", padx=10, pady=4)
+        ttk.Label(care, text="Heal (or wait) while health is below (%)").grid(
+            row=0, column=0, padx=8, pady=(6, 0), sticky="w")
+        self.spin(care, self.hmin, 0, 100, 5, 6, self.apply).grid(row=0, column=1, pady=(6, 0), sticky="w")
+        self.hfood = ttk.Label(care, foreground="gray")
+        self.hfood.grid(row=1, column=0, columnspan=3, padx=8, pady=(2, 0), sticky="w")
+        ttk.Label(care, text="Pause before the next /loot (s)").grid(row=2, column=0, padx=8, pady=(6, 0), sticky="w")
+        self.spin(care, self.lootwait, 0, 10, 0.5, 6, self.apply).grid(row=2, column=1, pady=(6, 0), sticky="w")
+        ttk.Checkbutton(care, variable=self.destroyvar, command=self.apply, text=(
+            "Destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up")).grid(
+            row=3, column=0, columnspan=3, padx=8, pady=(6, 8), sticky="w")
         self.hunt_last = "unset"
         self.hunt_sync()
 
-        body = ttk.Frame(w)
-        body.pack(fill="both", expand=True, padx=10, pady=4)
+        # ---- tab 3: sequences -------------------------------------------------------------------------------
+        body = ttk.Frame(tab_seq)
+        body.pack(fill="both", expand=True, padx=10, pady=(10, 4))
         body.columnconfigure((0, 1), weight=1, uniform="c")
         body.rowconfigure(0, weight=1)
 
@@ -116,7 +130,7 @@ class Gui:
         bar = ttk.Frame(left)
         bar.pack(fill="x", padx=6, pady=6)
         for text, cmd in (("Rename", self.rename_slot), ("Clear", self.clear_slot),
-                          ("Save to library â†’", self.to_library)):
+                          ("Save to library →", self.to_library)):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
 
         right = ttk.LabelFrame(body, text="Library (saved sequences)")
@@ -125,14 +139,22 @@ class Gui:
         self.lib.bind("<Double-1>", lambda e: self.rename_lib())
         bar = ttk.Frame(right)
         bar.pack(fill="x", padx=6, pady=6)
-        for text, cmd in (("â† Load into slot", self.from_library), ("Rename", self.rename_lib),
+        for text, cmd in (("← Load into slot", self.from_library), ("Rename", self.rename_lib),
                           ("Delete", self.delete_lib)):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
 
-        ttk.Label(w, foreground="gray", wraplength=720, text=(
+        ttk.Label(tab_seq, foreground="gray", wraplength=720, text=(
             "Record in game: TAB, 2, then 1-9. Play: TAB, 3, then 1-9. Name a slot, save it to the library, "
             "and load it back into any slot later.")).pack(fill="x", padx=12, pady=(2, 10))
         self.refresh()
+
+    @staticmethod
+    def spin(parent, var, lo, hi, inc, width, callback):
+        """A spinbox that applies its value as soon as it changes (arrows, typing, leaving the field)."""
+        sp = ttk.Spinbox(parent, from_=lo, to=hi, increment=inc, textvariable=var, width=width, command=callback)
+        sp.bind("<KeyRelease>", lambda e: callback())
+        sp.bind("<FocusOut>", lambda e: callback())
+        return sp
 
     @staticmethod
     def tree(parent, cols, heads, widths):
@@ -155,6 +177,7 @@ class Gui:
             self.cfg["hunt_gap"] = min(max(float(self.gap.get().replace(",", ".")), 0), 100) / 100
             self.cfg["hunt_map_gap"] = min(max(float(self.mgap.get().replace(",", ".")), 0), 100) / 100
             self.cfg["hunt_min_health"] = min(max(float(self.hmin.get().replace(",", ".")), 0), 100) / 100
+            self.cfg["loot_again_delay"] = min(max(float(self.lootwait.get().replace(",", ".")), 0), 10)
             self.cfg["hunt_destroy_unique"] = bool(self.destroyvar.get())
             self.cfg["hunt_walk"] = bool(self.walkvar.get())
             self.cfg["hunt_home"] = bool(self.homevar.get())
@@ -171,6 +194,9 @@ class Gui:
             for var, v in zip(self.harea, cur or ("", "", "", "")):
                 var.set("" if v == "" else "%g" % round(v * 100, 2))
         self.draw_area()
+        self.hfood.config(text=("Food for healing: saved. " if self.cfg.get("heal_item") else
+                                "Food for healing: not set. ") +
+                          "In game: TAB, 7, open Ctrl+1, mouse on the food, press F8.")
         self.win.after(500, self.hunt_sync)
 
     def draw_area(self):
@@ -336,7 +362,7 @@ class Gui:
             s = str(n)
             evs = self.cfg["sequences"].get(s)
             self.slots.insert("", "end", iid=s, values=(
-                s, self.cfg["names"].get(s, "") if evs else "", self.clicks(evs) if evs else "â€”"))
+                s, self.cfg["names"].get(s, "") if evs else "", self.clicks(evs) if evs else "—"))
         for name in sorted(self.cfg["library"], key=str.lower):
             self.lib.insert("", "end", iid=name, values=(name, self.clicks(self.cfg["library"][name])))
         if keep_s and self.slots.exists(keep_s):

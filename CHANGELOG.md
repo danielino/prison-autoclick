@@ -38,6 +38,8 @@
 - Turn detection accepts a thinner green ring and tolerates it pulsing.
 - Minimum distance between bots on screen: 7% (was 12%, which skipped bots 10% apart).
 
+- The window is split into three tabs (Autoclick, Auto-hunt, Sequences); the hunt options are grouped in
+  Area / Choosing bots / Movement / Health and loot. New settings: pause before the next `/loot`.
 - The code is split into the `prisonbot` package (config, winapi, vision, minimap, hunt, gui, app); `autoprison.py`
   is only the entry point.
 
