@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-10-21
 
 ### Added
+- **Aim**: the opening click leads walking bots, and each retry tries another click point around the bot (the
+  game accepts the attack on the feet in diamond-shaped rooms); the one that worked is tried first from then on.
+- **Second corpse**: `/loot` is sent again after each emptied loot window (pause set in the window, default 2 s).
 - **Auto-hunt (menu option 7)**: finds living bots by their name label, attacks the nearest isolated one (Ctrl+A + click),
   fights, loots with `/loot`, picks the items and starts over.
   - **Hunt area**: choose a rectangle of the screen (F9 top-left, F10 bottom-right); bots outside it are ignored.
