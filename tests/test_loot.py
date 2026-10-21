@@ -28,3 +28,12 @@ def test_loot_repeat_is_capped():
     b = Bot([True] * 10)
     b.hunt_loot(1)
     assert b.calls == 4
+
+
+def test_extra_delay_before_the_second_loot(monkeypatch):
+    waits = []
+    b = Bot([True, False])
+    b.cfg["loot_again_delay"] = 2.0
+    b.wait = lambda s: waits.append(s) or True
+    b.hunt_loot(1)
+    assert waits == [2.0]

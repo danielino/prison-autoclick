@@ -291,6 +291,8 @@ class HuntMixin:
             if not self.hunt_loot_once(h):
                 return
             log("HUNT loot: window emptied, sending %s again for any other corpse" % self.cfg["loot_command"])
+            if not self.wait(self.cfg.get("loot_again_delay", 2.0)):  # the game ignores a command typed right after the window closed
+                return
 
     def hunt_loot_once(self, h):
         """One /loot and taking the items of the window it opens. True if a window opened and was emptied."""
