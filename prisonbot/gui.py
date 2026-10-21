@@ -37,7 +37,7 @@ class Gui:
         self.rep = tk.StringVar(value="%g" % max(self.cfg["repeat_interval"], 5.0))
         for col, (label, var, lo, hi, inc) in enumerate((
                 ("Delay between clicks (ms)", self.delay, 10, 60000, 10),
-                ("Random variation (±%)", self.jit, 0, 90, 5),
+                ("Random variation (Â±%)", self.jit, 0, 90, 5),
                 ("Sequence speed (x)", self.speed, 0.1, 8, 0.05),
                 ("Auto-fight delay (s, min 5)", self.rep, 5, 300, 0.5))):
             ttk.Label(top, text=label).grid(row=0, column=col, padx=8, pady=(6, 0), sticky="w")
@@ -72,7 +72,7 @@ class Gui:
         self.gap = tk.StringVar(value="%g" % round(self.cfg["hunt_gap"] * 100, 1))
         self.mgap = tk.StringVar(value="%g" % round(self.cfg["hunt_map_gap"] * 100, 1))
         self.hmin = tk.StringVar(value="%g" % round(self.cfg["hunt_min_health"] * 100))
-        self.lootwait = tk.StringVar(value="%g" % self.cfg.get("loot_again_delay", 2.0))
+        self.lootwait = tk.StringVar(value="%g" % self.cfg.get("loot_again_delay", 3.0))
         self.walkvar = tk.BooleanVar(value=bool(self.cfg["hunt_walk"]))
         self.patrolvar = tk.BooleanVar(value=bool(self.cfg["hunt_patrol"]))
         self.homevar = tk.BooleanVar(value=bool(self.cfg["hunt_home"]))
@@ -97,7 +97,7 @@ class Gui:
             ttk.Checkbutton(move, variable=var, command=self.apply, text=text).pack(anchor="w", padx=8, pady=(4, 0))
         zrow = ttk.Frame(move)
         zrow.pack(anchor="w", padx=8, pady=(6, 8))
-        ttk.Button(zrow, text="Forbidden zones on the minimap…", command=self.zones_dialog).pack(side="left")
+        ttk.Button(zrow, text="Forbidden zones on the minimapâ€¦", command=self.zones_dialog).pack(side="left")
         self.zinfo = ttk.Label(zrow, foreground="gray")
         self.zinfo.pack(side="left", padx=8)
         self.zones_label()
@@ -130,7 +130,7 @@ class Gui:
         bar = ttk.Frame(left)
         bar.pack(fill="x", padx=6, pady=6)
         for text, cmd in (("Rename", self.rename_slot), ("Clear", self.clear_slot),
-                          ("Save to library →", self.to_library)):
+                          ("Save to library â†’", self.to_library)):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
 
         right = ttk.LabelFrame(body, text="Library (saved sequences)")
@@ -139,7 +139,7 @@ class Gui:
         self.lib.bind("<Double-1>", lambda e: self.rename_lib())
         bar = ttk.Frame(right)
         bar.pack(fill="x", padx=6, pady=6)
-        for text, cmd in (("← Load into slot", self.from_library), ("Rename", self.rename_lib),
+        for text, cmd in (("â† Load into slot", self.from_library), ("Rename", self.rename_lib),
                           ("Delete", self.delete_lib)):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 4))
 
@@ -362,7 +362,7 @@ class Gui:
             s = str(n)
             evs = self.cfg["sequences"].get(s)
             self.slots.insert("", "end", iid=s, values=(
-                s, self.cfg["names"].get(s, "") if evs else "", self.clicks(evs) if evs else "—"))
+                s, self.cfg["names"].get(s, "") if evs else "", self.clicks(evs) if evs else "â€”"))
         for name in sorted(self.cfg["library"], key=str.lower):
             self.lib.insert("", "end", iid=name, values=(name, self.clicks(self.cfg["library"][name])))
         if keep_s and self.slots.exists(keep_s):

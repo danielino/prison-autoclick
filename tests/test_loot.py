@@ -40,3 +40,19 @@ def test_extra_delay_before_the_second_loot(monkeypatch):
     b.wait = lambda s: waits.append(s) or True
     b.hunt_loot(1)
     assert waits == [2.0]
+
+
+def test_leftover_window_is_emptied(monkeypatch):
+    taken = []
+    b = Bot([])
+    b.hunt_say = lambda t: None
+    b.hunt_loot_items = lambda h, top: taken.append(top) or True
+    monkeypatch.setattr(hunt, "find_loot", lambda h: 0.33)
+    assert b.hunt_loot_leftover(1)
+    assert taken == [0.33]
+
+
+def test_no_leftover_window_means_nothing_to_do(monkeypatch):
+    b = Bot([])
+    monkeypatch.setattr(hunt, "find_loot", lambda h: None)
+    assert not b.hunt_loot_leftover(1)

@@ -102,6 +102,8 @@ class HuntMixin:
     def hunt_attack(self, h, spot, variant=0):
         """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected."""
         for attempt in (1,):
+            if self.hunt_loot_leftover(h):
+                return False  # the window hid the scene: look for the target again
             self.hunt_say("attacking (Ctrl+A + click)")
             key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
             spot = self.hunt_aim(h, spot)  # the bots walk around: aim where this one will be when the click lands
@@ -311,7 +313,8 @@ class HuntMixin:
             if not self.hunt_loot_once(h):
                 return
             log("HUNT loot: window emptied, sending %s again for any other corpse" % self.cfg["loot_command"])
-            if not self.wait(self.cfg.get("loot_again_delay", 2.0)):  # the game ignores a command typed right after the window closed
+            # the game answers "Necesitarás esperar un poco más para repetir eso" to a /loot typed too soon
+            if not self.wait(self.cfg.get("loot_again_delay", 3.0)):
                 return
 
     def hunt_loot_once(self, h):
@@ -329,6 +332,21 @@ class HuntMixin:
         if top is None:
             log("HUNT loot window did not open")
             return False
+        return self.hunt_loot_items(h, top)
+
+    def hunt_loot_leftover(self, h):
+        """If a loot window is open (it appeared after the wait for it had run out), empty it. True if there was one:
+        it covers the middle of the screen, so no attack click can work while it is open."""
+        top = find_loot(h)
+        if top is None:
+            return False
+        log("HUNT a loot window is still open: taking its items")
+        self.hunt_say("loot window left open: taking the items")
+        self.hunt_loot_items(h, top)
+        return True
+
+    def hunt_loot_items(self, h, top):
+        """Take the items of the open loot window (header at `top`). True once it has closed."""
         skip, destroyed = 0, 0  # skip = rows at the top that cannot be taken and are left alone
         for k in range(14):
             # item rows (icon + name) sit 0.095 of the screen height below the header, 0.069 apart; the window is
@@ -668,6 +686,8 @@ class HuntMixin:
                 if not self.hunt_fight(h):
                     return
                 self.hunt_loot(h)
+                continue
+            if self.hunt_loot_leftover(h):  # a loot window that opened late, after we had given up waiting for it
                 continue
             if self.hunt_zone_changed(h, zone0):
                 return
