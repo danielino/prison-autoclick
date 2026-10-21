@@ -286,20 +286,27 @@ class HuntMixin:
                 return False
 
     def hunt_loot(self, h):
+        """/loot, and again after each emptied window: a second corpse (two bots in the fight) needs its own /loot."""
+        for n in range(4):
+            if not self.hunt_loot_once(h):
+                return
+            log("HUNT loot: window emptied, sending %s again for any other corpse" % self.cfg["loot_command"])
+
+    def hunt_loot_once(self, h):
+        """One /loot and taking the items of the window it opens. True if a window opened and was emptied."""
         if not self.wait(1.0):
-            return
+            return False
         self.hunt_say("looting (%s)" % self.cfg["loot_command"])
         type_line(self.cfg["loot_command"])
         end = time.time() + 3.5
-        opened = False
         top = None
         while time.time() < end and top is None:
             if not self.wait(0.2):
-                return
+                return False
             top = find_loot(h)
         if top is None:
             log("HUNT loot window did not open")
-            return
+            return False
         skip, destroyed = 0, 0  # skip = rows at the top that cannot be taken and are left alone
         for k in range(14):
             # item rows (icon + name) sit 0.095 of the screen height below the header, 0.069 apart; the window is
@@ -310,7 +317,7 @@ class HuntMixin:
             self.hunt_move(h, 0.41, top + 0.095 + row * 0.069)
             mouse_click("L")
             if not self.wait(0.6):
-                return
+                return False
             if chat_unique_error(h) and changed(base, grab_chat(h), min_frac=0.01, tol=40):
                 log("HUNT unique item at row %d (the game says we already have one)" % row)
                 if self.cfg["hunt_destroy_unique"] and destroyed < 4 and self.hunt_destroy(h, top, row):
@@ -320,12 +327,13 @@ class HuntMixin:
             top = find_loot(h)
             if top is None:
                 if not self.wait(0.4):
-                    return
+                    return False
                 top = find_loot(h)
                 if top is None:
                     log("HUNT loot window closed after %d clicks" % (k + 1))
-                    return
+                    return True
         log("HUNT loot window still open after 14 clicks")
+        return False
 
     def hunt_destroy(self, h, top, row):
         """Right click the item -> CONFIRMAR dialog -> SI. The items below move up. True if the dialog was answered."""
