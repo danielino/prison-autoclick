@@ -9,17 +9,20 @@ class Bot(hunt.HuntMixin):
         self.moves.append((fx, fy))
 
 
-def patch(monkeypatch, bots, bars):
+def patch(monkeypatch, bots, bars, works=lambda n: True):
+    """works(n): did the n-th click (1-based) produce a new chat line?"""
     clicks = []
     monkeypatch.setattr(hunt, "find_bots", lambda h: bots)
     monkeypatch.setattr(hunt, "find_bars", lambda h: bars)
     monkeypatch.setattr(hunt, "mouse_click", lambda b="L": clicks.append(b))
+    monkeypatch.setattr(hunt, "grab_chat", lambda h: b"")
+    monkeypatch.setattr(hunt, "changed", lambda a, b, **k: bool(clicks) and works(len(clicks)))
     monkeypatch.setattr(hunt.time, "sleep", lambda s: None)
     return clicks
 
 
 def test_manual_attack_clicks_the_label_bot(monkeypatch):
-    clicks = patch(monkeypatch, [(0.4, 0.3)], [(0.9, 0.9)])
+    clicks = patch(monkeypatch, [(0.4, 0.3)], [])
     b = Bot()
     assert b.hunt_manual_attack(1, None)
     assert b.moves == [(0.4, 0.3)] and clicks == ["L"]
@@ -51,6 +54,25 @@ def test_manual_attack_picks_the_bot_nearest_to_the_spot(monkeypatch):
     b = Bot()
     b.hunt_manual_attack(1, (0.65, 0.3))
     assert b.moves == [(0.7, 0.3)]
+
+
+def test_manual_attack_tries_the_next_candidate_when_the_click_did_nothing(monkeypatch):
+    clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: n >= 2)
+    b = Bot()
+    assert b.hunt_manual_attack(1, (0.5, 0.3))
+    assert b.moves == [(0.5, 0.3), (0.2, 0.7)] and len(clicks) == 2
+
+
+def test_manual_attack_fails_when_no_click_has_an_effect(monkeypatch):
+    clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: False)
+    assert not Bot().hunt_manual_attack(1, None)
+    assert len(clicks) == 2
+
+
+def test_label_and_bar_of_the_same_bot_are_one_candidate(monkeypatch):
+    clicks = patch(monkeypatch, [(0.47, 0.29)], [(0.475, 0.292)], works=lambda n: False)
+    Bot().hunt_manual_attack(1, None)
+    assert len(clicks) == 1
 
 
 def test_seg_dist():

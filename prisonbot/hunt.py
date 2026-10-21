@@ -136,21 +136,29 @@ class HuntMixin:
     def hunt_manual_attack(self, h, spot):
         """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
         stands somewhere else, so the scene is scanned again)."""
-        bots = find_bots(h)
-        if not bots:  # in a fight the name label changes colour: the red health bars still show where they are
-            bots = find_bars(h)
-            if bots:
-                log("HUNT manual attack: no label, using the health bar")
-        if bots:
-            ref = spot or (0.5, 0.5)
-            spot = min(bots, key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
-        if not spot:
+        ref = spot or (0.5, 0.5)
+        cands = []  # name labels first; in a fight the label changes colour, so the red health bars count too
+        for p in find_bots(h) + find_bars(h):
+            if all(abs(p[0] - q[0]) > 0.05 or abs(p[1] - q[1]) > 0.05 for q in cands):
+                cands.append(p)
+        cands.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
+        if spot and not cands:
+            cands = [spot]
+        if not cands:
             log("HUNT manual attack: no bot found on the screen")
             return False
-        self.hunt_move(h, *spot)
-        time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
-        mouse_click("L")  # inside a fight a plain click on the bot attacks (no Ctrl+A)
-        return True
+        for p in cands[:3]:
+            base = grab_chat(h)
+            self.hunt_move(h, *p)
+            time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
+            mouse_click("L")  # inside a fight a plain click on the bot attacks (no Ctrl+A)
+            for _ in range(6):  # an attack always writes a line in the chat: no new line = the click hit nothing
+                time.sleep(0.3)
+                if changed(base, grab_chat(h), min_frac=0.01, tol=40):
+                    log("HUNT manual attack at (%.3f,%.3f): done" % p)
+                    return True
+            log("HUNT manual attack at (%.3f,%.3f): nothing happened, trying the next candidate" % p)
+        return False
 
     def hunt_fight(self, h, spot=None):
         """Attack by hand for the first turns (Ctrl+R has nothing to repeat yet), then Ctrl+R on every turn of yours until
@@ -179,7 +187,10 @@ class HuntMixin:
                     sent_r = None
                     log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
                     manual, end_turn = self.OPENING, False
-                if mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
+                # after the first attack the green rings get thin and may vanish for a while although it is still our
+                # turn (one attack left): keep going for 8 s after they were last seen
+                still_mine = mine or (0 < manual < self.OPENING and away is not None and now - away < 8.0)
+                if still_mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
                     log("HUNT health %.0f%% in the fight" % (read_health(h) * 100))
                     if manual > 0:
                         log("HUNT my turn (buttons %.3f) -> manual attack (%d left)" % (ft, manual))
