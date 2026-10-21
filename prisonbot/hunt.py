@@ -62,13 +62,46 @@ class HuntMixin:
         mine, ft = detect(h, "turn")
         return banner or mine, fc, ft
 
+    @staticmethod
+    def hunt_px(h, p):
+        x, y, w, hh = client_rect(h)
+        return x + int(p[0] * w), y + int(p[1] * hh)
+
+    LEAD = 0.2  # seconds between the last look at the bot and the click landing
+    MAX_LEAD = 0.07  # never aim further than this (screen fraction) from where the bot was seen
+
+    def hunt_aim(self, h, spot):
+        """Look at the bot twice and aim ahead of it if it is walking. Returns the point to click."""
+        def seen():
+            near = [p for p in find_bots(h) if abs(p[0] - spot[0]) < 0.10 and abs(p[1] - spot[1]) < 0.12]
+            return min(near, key=lambda p: (p[0] - spot[0]) ** 2 + (p[1] - spot[1]) ** 2) if near else None
+        t1 = time.time()
+        a = seen()
+        t2 = time.time()
+        b = seen() if a else None
+        t3 = time.time()
+        if not a:
+            return spot
+        if not b:
+            return a
+        dt = max((t2 + t3) / 2 - (t1 + t2) / 2, 0.05)  # time between the middles of the two scans
+        dx, dy = (b[0] - a[0]) / dt * self.LEAD, (b[1] - a[1]) / dt * self.LEAD
+        d = (dx * dx + dy * dy) ** 0.5
+        if d > self.MAX_LEAD:
+            dx, dy = dx * self.MAX_LEAD / d, dy * self.MAX_LEAD / d
+        p = (b[0] + dx, b[1] + dy)
+        if d > 0.004:
+            log("HUNT bot is moving: aiming (%.3f,%.3f) -> (%.3f,%.3f)" % (b[0], b[1], p[0], p[1]))
+        return p
+
     def hunt_attack(self, h, spot):
         """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected."""
         for attempt in (1,):
             self.hunt_say("attacking (Ctrl+A + click)")
-            self.hunt_move(h, *spot)
             key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
-            time.sleep(0.1)
+            spot = self.hunt_aim(h, spot)  # the bots walk around: aim where this one will be when the click lands
+            u32.SetCursorPos(*self.hunt_px(h, spot))
+            time.sleep(0.05)
             mouse_click("L")
             # the character now WALKS to the bot and the fight starts when it arrives: keep waiting while it moves,
             # give up only when it has stood still for 3 s without a fight (or after 30 s)
