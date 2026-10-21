@@ -94,3 +94,10 @@ def test_own_character_is_never_a_candidate(monkeypatch):
 def test_seg_dist():
     assert hunt.HuntMixin.seg_dist((0.5, 0.5), (0, 0), (1, 0)) == 0.5
     assert hunt.HuntMixin.seg_dist((2, 0), (0, 0), (1, 0)) == 1.0
+
+
+def test_health_bars_are_tried_before_name_labels(monkeypatch):
+    patch(monkeypatch, [(0.5, 0.5)], [(0.2, 0.2)], works=lambda n: True)  # the label is nearer to the centre
+    b = Bot()
+    b.hunt_manual_attack(1, None)
+    assert b.moves == [(0.2, 0.2)]

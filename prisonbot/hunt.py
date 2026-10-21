@@ -177,19 +177,23 @@ class HuntMixin:
         locked = getattr(self, "fight_spot", None)  # the bot hit first: keep hitting that one
         ref = locked or spot or (0.5, 0.5)
         me = find_self(h)
-        cands = []  # name labels first; in a fight the label changes colour, so the red health bars count too
-        for p in find_bots(h) + find_bars(h):
-            if me and abs(p[0] - me[0]) < 0.06 and abs(p[1] - (me[1] + BODY_DROP)) < 0.08:
-                continue  # that is our own character
-            if all(abs(p[0] - q[0]) > 0.05 or abs(p[1] - q[1]) > 0.05 for q in cands):
-                cands.append(p)
-        cands.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
+        cands = []  # the red health bars are the reliable cue in a fight (the name label changes colour and the
+        for group in (find_bars(h), find_bots(h)):  # label scan also picks up floor and text): bars first, then labels
+            found = []
+            for p in group:
+                if me and abs(p[0] - me[0]) < 0.07 and -0.02 < p[1] - me[1] < 0.26:
+                    continue  # that is our own character (label to feet)
+                if all(abs(p[0] - q[0]) > 0.05 or abs(p[1] - q[1]) > 0.05 for q in cands + found):
+                    found.append(p)
+            found.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
+            cands += found
         if spot and not cands:
             cands = [spot]
         if not cands:
             log("HUNT manual attack: no bot found on the screen")
             return False
-        for p in cands[:3]:
+        log("HUNT manual attack candidates: %s" % ", ".join("(%.3f,%.3f)" % p for p in cands[:4]))
+        for p in cands[:4]:
             base = grab_chat(h)
             self.hunt_move(h, *p)
             time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
