@@ -17,6 +17,9 @@
     last safe position instead of stopping.
   - **Forbidden zones**: draw rectangles on a snapshot of the minimap; walking, patrol and target choice keep out of them.
   - **Health gate**: waits to attack while the SALUD bar is below a chosen percentage (default 70%).
+  - **Auto-heal**: below that percentage it eats the food you pointed at (open Ctrl+1, mouse on the food, F8 in the
+    hunt menu): double click, `+` while "salud +N" is white, `-` once when it turns red, then the green tick.
+  - **Third attack** below 50% health: three manual attacks instead of two.
   - **Zone change**: stops if the zone changes (you died / left). The zone is recognised by the shape of its minimap;
     the name is not used because it moves and scrolls when long.
   - **Unique loot items**: when the game answers that an item is UNIQUE (red line in the chat), right click, confirm

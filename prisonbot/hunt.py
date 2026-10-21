@@ -18,6 +18,11 @@ class HuntMixin:
             if self.pressed(vk):
                 self.hunt_pts[key] = pt
                 log("HUNT corner %s = (%.3f, %.3f)" % (key, pt[0], pt[1]))
+        if self.pressed(VK["F8"]):  # the food in the open character sheet (Ctrl+1)
+            self.cfg["heal_item"] = [round(pt[0], 4), round(pt[1], 4)]
+            save(self.cfg)
+            self.msg = "Food position saved"
+            log("HUNT food item = (%.3f, %.3f)" % pt)
 
     def on_hunt_setup(self, d):
         if d == 0:
@@ -591,6 +596,13 @@ class HuntMixin:
                 continue
             hp = read_health(h)
             if hp < self.cfg["hunt_min_health"]:  # a tough bot left us low: do nothing new until we have healed
+                if self.cfg.get("heal_item") and time.time() > getattr(self, "_heal_retry", 0):
+                    ate = self.hunt_heal(h)
+                    if not self.alive():
+                        return
+                    if not ate:
+                        self._heal_retry = time.time() + 60  # it did not work: do not try again for a minute
+                    continue
                 self.hunt_say("health %d%% is below %d%%: waiting to heal" % (hp * 100, self.cfg["hunt_min_health"] * 100))
                 if time.time() - getattr(self, "_hlog", 0) > 15:
                     self._hlog = time.time()

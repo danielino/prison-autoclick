@@ -8,10 +8,11 @@ from .winapi import *
 from .vision import *
 from .minimap import *
 from .hunt import HuntMixin
+from .heal import HealMixin
 from .gui import Gui
 
 
-class App(HuntMixin):
+class App(HuntMixin, HealMixin):
     def __init__(self):
         self.cfg = load()
         self.hot = VK.get(self.cfg["hotkey"].upper(), 0x09)
@@ -79,6 +80,7 @@ class App(HuntMixin):
             "HUNT_SETUP": ["AUTO-HUNT: choose the area where bots may be attacked",
                            "Put the mouse on the TOP-LEFT corner, press F9" + ("  [set]" if "tl" in self.hunt_pts else ""),
                            "Put the mouse on the BOTTOM-RIGHT corner, press F10" + ("  [set]" if "br" in self.hunt_pts else ""),
+                           "To heal: Ctrl+1, mouse on the food in the list, press F8" + ("  [saved]" if self.cfg.get("heal_item") else ""),
                            "1 start" + ("" if len(self.hunt_pts) == 2 else " (set both corners first)"),
                            "2 use the saved area" + ("" if self.cfg.get("hunt_area") else " (none saved)"),
                            "0 cancel"],
