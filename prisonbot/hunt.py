@@ -94,12 +94,20 @@ class HuntMixin:
             log("HUNT bot is moving: aiming (%.3f,%.3f) -> (%.3f,%.3f)" % (b[0], b[1], p[0], p[1]))
         return p
 
-    def hunt_attack(self, h, spot):
+    # Where exactly the game accepts the attack click depends on the room (in a diamond-shaped room it is the feet) and
+    # on the bot (its name label is not always above its body): each retry tries another point around the first one
+    AIM_VARIANTS = [(0.0, 0.0), (0.025, 0.02), (-0.025, 0.02), (0.0, 0.045), (0.03, -0.015), (-0.03, -0.015)]
+    aim_pref = 0  # the variant that worked last time: tried first from then on
+
+    def hunt_attack(self, h, spot, variant=0):
         """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected."""
         for attempt in (1,):
             self.hunt_say("attacking (Ctrl+A + click)")
             key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
             spot = self.hunt_aim(h, spot)  # the bots walk around: aim where this one will be when the click lands
+            dx, dy = self.AIM_VARIANTS[variant % len(self.AIM_VARIANTS)]
+            spot = (spot[0] + dx, spot[1] + dy)
+            log("HUNT aim variant %d: click at (%.3f,%.3f)" % (variant % len(self.AIM_VARIANTS), spot[0], spot[1]))
             u32.SetCursorPos(*self.hunt_px(h, spot))
             time.sleep(0.05)
             mouse_click("L")
@@ -161,7 +169,11 @@ class HuntMixin:
     def hunt_engage(self, h, bot):
         """Attack; if the bot is out of range, walk closer and try again (up to 4 times)."""
         for step in range(4):
-            if self.hunt_attack(h, bot):
+            variant = (self.aim_pref + step) % len(self.AIM_VARIANTS)
+            if self.hunt_attack(h, bot, variant):
+                if variant != self.aim_pref:
+                    log("HUNT aim variant %d worked: using it first from now on" % variant)
+                self.aim_pref = variant
                 return True
             if not self.alive() or step == 3 or not self.hunt_approach(h, bot):
                 return False
