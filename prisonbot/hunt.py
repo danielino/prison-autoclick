@@ -172,6 +172,7 @@ class HuntMixin:
         last, gone, t0 = 0.0, None, time.time()
         manual, sent_r, end_turn, away, fails = self.OPENING, None, False, None, 0
         self.fight_spot = None
+        bonus = False  # the third attack (health below 50%) was already used in this manual phase
         mine_t = -99.0
         while True:
             if not self.wait(0.4):
@@ -192,17 +193,21 @@ class HuntMixin:
                     # (the bot it repeated on is dead and another one is in the fight): attack by hand again
                     sent_r = None
                     log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
-                    manual, end_turn, self.fight_spot = self.OPENING, False, None  # the first bot is dead: new target
+                    manual, end_turn, self.fight_spot, bonus = self.OPENING, False, None, False  # first bot dead: new target
                 # after the first attack the green rings get thin and may vanish for a while although it is still our
                 # turn (one attack left): keep going for 8 s after they were last seen
                 still_mine = mine or (0 < manual < self.OPENING and away is not None and now - away < 8.0)
                 if still_mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
-                    log("HUNT health %.0f%% in the fight" % (read_health(h) * 100))
+                    hp = read_health(h)
+                    log("HUNT health %.0f%% in the fight" % (hp * 100))
                     if manual > 0:
                         log("HUNT my turn (buttons %.3f) -> manual attack (%d left)" % (ft, manual))
                         self.hunt_say("my turn: attacking (click on the bot)")
                         if self.hunt_manual_attack(h, spot):
                             manual -= 1
+                            if manual == 0 and hp < 0.5 and not bonus:
+                                manual, bonus = 1, True  # below 50% health the game gives a third attack
+                                log("HUNT health below 50%: third attack")
                             end_turn = manual == 0  # both attacks done: spend the leftover action points by ending the turn
                     elif end_turn:
                         log("HUNT still my turn after the attacks -> Ctrl+T (end turn)")
