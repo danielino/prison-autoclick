@@ -9,12 +9,13 @@ class Bot(hunt.HuntMixin):
         self.moves.append((fx, fy))
 
 
-def patch(monkeypatch, bots, bars, works=lambda n: True):
+def patch(monkeypatch, bots, bars, works=lambda n: True, me=None):
     """works(n): did the n-th click (1-based) produce a new chat line?"""
     clicks = []
     monkeypatch.setattr(hunt, "find_bots", lambda h: bots)
     monkeypatch.setattr(hunt, "find_bars", lambda h: bars)
     monkeypatch.setattr(hunt, "mouse_click", lambda b="L": clicks.append(b))
+    monkeypatch.setattr(hunt, "find_self", lambda h: me)
     monkeypatch.setattr(hunt, "grab_chat", lambda h: b"")
     monkeypatch.setattr(hunt, "changed", lambda a, b, **k: bool(clicks) and works(len(clicks)))
     monkeypatch.setattr(hunt.time, "sleep", lambda s: None)
@@ -73,6 +74,21 @@ def test_label_and_bar_of_the_same_bot_are_one_candidate(monkeypatch):
     clicks = patch(monkeypatch, [(0.47, 0.29)], [(0.475, 0.292)], works=lambda n: False)
     Bot().hunt_manual_attack(1, None)
     assert len(clicks) == 1
+
+
+def test_second_attack_keeps_hitting_the_first_bot(monkeypatch):
+    patch(monkeypatch, [(0.47, 0.39), (0.35, 0.33)], [])
+    b = Bot()
+    b.hunt_manual_attack(1, None)  # nearest to the centre: (0.47, 0.39)
+    b.hunt_manual_attack(1, None)
+    assert b.moves == [(0.47, 0.39), (0.47, 0.39)]
+
+
+def test_own_character_is_never_a_candidate(monkeypatch):
+    patch(monkeypatch, [], [(0.566, 0.546), (0.47, 0.39)], me=(0.566, 0.43))  # own body = label + BODY_DROP
+    b = Bot()
+    b.hunt_manual_attack(1, None)
+    assert b.moves == [(0.47, 0.39)]
 
 
 def test_seg_dist():

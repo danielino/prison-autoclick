@@ -136,9 +136,13 @@ class HuntMixin:
     def hunt_manual_attack(self, h, spot):
         """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
         stands somewhere else, so the scene is scanned again)."""
-        ref = spot or (0.5, 0.5)
+        locked = getattr(self, "fight_spot", None)  # the bot hit first: keep hitting that one
+        ref = locked or spot or (0.5, 0.5)
+        me = find_self(h)
         cands = []  # name labels first; in a fight the label changes colour, so the red health bars count too
         for p in find_bots(h) + find_bars(h):
+            if me and abs(p[0] - me[0]) < 0.06 and abs(p[1] - (me[1] + BODY_DROP)) < 0.08:
+                continue  # that is our own character
             if all(abs(p[0] - q[0]) > 0.05 or abs(p[1] - q[1]) > 0.05 for q in cands):
                 cands.append(p)
         cands.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
@@ -156,6 +160,7 @@ class HuntMixin:
                 time.sleep(0.3)
                 if changed(base, grab_chat(h), min_frac=0.01, tol=40):
                     log("HUNT manual attack at (%.3f,%.3f): done" % p)
+                    self.fight_spot = p
                     return True
             log("HUNT manual attack at (%.3f,%.3f): nothing happened, trying the next candidate" % p)
         return False
@@ -166,6 +171,7 @@ class HuntMixin:
         second one is in the fight), it starts again with manual attacks. False if stopped/timeout."""
         last, gone, t0 = 0.0, None, time.time()
         manual, sent_r, end_turn, away, fails = self.OPENING, None, False, None, 0
+        self.fight_spot = None
         mine_t = -99.0
         while True:
             if not self.wait(0.4):
@@ -186,7 +192,7 @@ class HuntMixin:
                     # (the bot it repeated on is dead and another one is in the fight): attack by hand again
                     sent_r = None
                     log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
-                    manual, end_turn = self.OPENING, False
+                    manual, end_turn, self.fight_spot = self.OPENING, False, None  # the first bot is dead: new target
                 # after the first attack the green rings get thin and may vanish for a while although it is still our
                 # turn (one attack left): keep going for 8 s after they were last seen
                 still_mine = mine or (0 < manual < self.OPENING and away is not None and now - away < 8.0)
