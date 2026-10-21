@@ -55,7 +55,10 @@ def _label(r, g, b):  # lavender text of a living bot's name label (corpses and 
 
 LABEL_AREA = (0.08, 0.10, 0.70, 0.64)  # scene only: no minimap, no chat, no target panel; stops above the bottom bar
 # (its "ABS 100%" text has the same colour as a bot label and used to be read as a bot at the bottom of the screen)
-BODY_DROP = 0.11  # the body (where to click) is this fraction of the screen height below the label
+# the body (where to click) is this fraction of the screen height below the label. The characters are drawn smaller in
+# top-down rooms (label to feet 0.12 of the height instead of 0.33), so the point has to stay close to the label:
+# 0.08 is still the chest in the big zones and the hips/legs in the small ones
+BODY_DROP = 0.08
 
 
 def _mine(r, g, b):  # your own name label: pure yellow
