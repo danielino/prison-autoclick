@@ -188,6 +188,81 @@ def find_bars(h):
     return sorted(((p[0], min(p[1] + BAR_DROP, 0.9)) for p in out), key=lambda p: (p[0] - 0.5) ** 2 + (p[1] - 0.65) ** 2)
 
 
+# --- ATAQUES: the number of attacks left this turn (top left HUD box, one big orange digit; red when 0).
+# Read by shape: the font never changes, so the digit is compared with stored 8x12 bitmaps instead of using an OCR.
+ATTACKS_AREA = (0.058, 0.02, 0.027, 0.085)  # the digit and, above it, the small word ATAQUES (smaller than the digit)
+GLYPH_W, GLYPH_H = 8, 12
+ATTACK_GLYPHS = {  # normalised bitmaps cut from real screenshots
+    1: ("....####", ".#######", "########", "##..####", "....####", "....####",
+        "....####", "....####", "....####", "....####", "....####", "....####"),
+    2: ("..#####.", ".#######", ".###.###", "####.###", "####.###", ".....###",
+        "....###.", "...###..", "..####..", ".####.##", ".#######", ".#######"),
+}
+
+
+def _hud_digit(r, g, b):  # orange digit and red zero
+    return r >= 190 and b <= 120 and r - b >= 100
+
+
+def _glyph_blobs(mask, w, hh):
+    """4-connected components of a boolean grid -> [(x0, y0, x1, y1, cells)]."""
+    seen, out = set(), []
+    for y in range(hh):
+        for x in range(w):
+            if mask[y * w + x] and (x, y) not in seen:
+                stack, cells = [(x, y)], []
+                seen.add((x, y))
+                while stack:
+                    cx, cy = stack.pop()
+                    cells.append((cx, cy))
+                    for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                        if 0 <= nx < w and 0 <= ny < hh and mask[ny * w + nx] and (nx, ny) not in seen:
+                            seen.add((nx, ny))
+                            stack.append((nx, ny))
+                xs, ys = [c[0] for c in cells], [c[1] for c in cells]
+                out.append((min(xs), min(ys), max(xs), max(ys), cells))
+    return out
+
+
+def attacks_from_buf(buf, w, hh):
+    """Attacks left (0..3, 3 = three or more) or None if the digit cannot be read. The digit is the tallest orange
+    blob of the area (the word ATAQUES above it is much smaller)."""
+    mask = [_hud_digit(buf[(y * w + x) * 4 + 2], buf[(y * w + x) * 4 + 1], buf[(y * w + x) * 4])
+            for y in range(hh) for x in range(w)]
+    blobs = [b for b in _glyph_blobs(mask, w, hh) if b[3] - b[1] >= max(int(hh * 0.18), 8)]
+    if not blobs:
+        return None
+    x0, y0, x1, y1, cells = max(blobs, key=lambda b: (b[3] - b[1], len(b[4])))
+    bw, bh = x1 - x0 + 1, y1 - y0 + 1
+    reds = sum(1 for cx, cy in cells if buf[((cy) * w + cx) * 4 + 1] < 90)
+    if reds > len(cells) * 0.6:
+        return 0  # the zero is drawn in red
+    on = set(cells)
+    grid = []
+    for j in range(GLYPH_H):
+        row = ""
+        for i in range(GLYPH_W):
+            xa, xb = x0 + i * bw // GLYPH_W, max(x0 + (i + 1) * bw // GLYPH_W, x0 + i * bw // GLYPH_W + 1)
+            ya, yb = y0 + j * bh // GLYPH_H, max(y0 + (j + 1) * bh // GLYPH_H, y0 + j * bh // GLYPH_H + 1)
+            n = sum(1 for yy in range(ya, yb) for xx in range(xa, xb) if (xx, yy) in on)
+            row += "#" if n * 2 >= (xb - xa) * (yb - ya) else "."
+        grid.append(row)
+
+    def dist(t):
+        return sum(1 for a, b in zip("".join(grid), "".join(t)) if a != b)
+    best = min(ATTACK_GLYPHS, key=lambda k: dist(ATTACK_GLYPHS[k]))
+    if dist(ATTACK_GLYPHS[best]) <= 14:
+        return best
+    return 3 if bw / bh > 0.4 else None  # a wide digit that is neither 1 nor 2: 3 (the only other one that occurs)
+
+
+def read_attacks(h):
+    fx, fy, fw, fh = ATTACKS_AREA
+    x, y, w, hh = client_rect(h)
+    rw, rh = int(fw * w), int(fh * hh)
+    return attacks_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh)
+
+
 # --- health ("SALUD" bar, bottom right): a red fill growing from the left; measured on screenshots the bar is ~99 px long
 # at a window width of 2000 and its fill is linear in the SALUD number
 HEALTH_AREA = (0.62, 0.76, 0.08, 0.14)  # the bottom bar moves a little when the chat panel changes height

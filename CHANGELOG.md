@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Attacks left**: the ATAQUES number of the HUD is read (by shape, no OCR engine). The manual attacks of a turn follow
+  it (so the third attack is played whenever the game gives it), and a turn showing 3 is played by hand once so that
+  Ctrl+R repeats it. Without a readable number it falls back to the health rule (below 50%).
+
 ## 1.2.0 - 2026-10-21
 
 ### Added
