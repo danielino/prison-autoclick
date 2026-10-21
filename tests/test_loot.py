@@ -7,6 +7,9 @@ class Bot(hunt.HuntMixin):
         self.calls = 0
         self.cfg = {"loot_command": "/loot"}
 
+    def wait(self, s):
+        return True
+
     def hunt_loot_once(self, h):
         self.calls += 1
         return self.results.pop(0) if self.results else False
