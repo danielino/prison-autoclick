@@ -7,6 +7,12 @@
   it (so the third attack is played whenever the game gives it), and a turn showing 3 is played by hand once so that
   Ctrl+R repeats it. Without a readable number it falls back to the health rule (below 50%).
 
+### Fixed
+- **Stuck in a fight**: when the only candidate of a manual attack does nothing, the click is shifted around it (the same
+  points as the opening aim) instead of repeating the same click; after 3 rounds without a working click it sends
+  Ctrl+R, after 6 Ctrl+T, so the fight moves on.
+- Second loot window opening late: pause before the second `/loot` is 3 s, and a window left open is emptied.
+
 ## 1.2.0 - 2026-10-21
 
 ### Added

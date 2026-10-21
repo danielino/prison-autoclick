@@ -93,3 +93,15 @@ def test_three_attacks_on_a_later_ctrl_r_turn_trigger_one_manual_turn(monkeypatc
                  [MINE, MINE, MINE, OTHER, OTHER, MINE, MINE, MINE, MINE, OTHER, OTHER, None, None, None], hp=0.9,
                  attacks=[2, 1, 1, 0, 0, 3, 2, 2, 1, 1, 0, 0])
     assert events.startswith("AAT") and "AAAT" in events
+
+
+def test_repeated_misses_end_the_turn_instead_of_looping(monkeypatch):
+    f = Fight([MINE] * 40 + [None, None, None], 0.9)
+    f.hunt_manual_attack = lambda h, spot: f.events.append("x") or False
+    monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
+    monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
+    monkeypatch.setattr(hunt, "read_health", lambda h: 0.9)
+    monkeypatch.setattr(hunt, "key_combo", lambda a, b: f.events.append({0x14: "T", 0x13: "R"}[b]))
+    assert f.hunt_fight(1)
+    ev = "".join(f.events)
+    assert "xxxR" in ev and "T" in ev  # Ctrl+R after 3 misses, Ctrl+T after 6

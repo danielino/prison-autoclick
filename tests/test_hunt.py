@@ -67,13 +67,13 @@ def test_manual_attack_tries_the_next_candidate_when_the_click_did_nothing(monke
 def test_manual_attack_fails_when_no_click_has_an_effect(monkeypatch):
     clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: False)
     assert not Bot().hunt_manual_attack(1, None)
-    assert len(clicks) == 2
+    assert len(clicks) == 6  # 2 candidates + 4 shifted clicks around the nearest
 
 
 def test_label_and_bar_of_the_same_bot_are_one_candidate(monkeypatch):
     clicks = patch(monkeypatch, [(0.47, 0.29)], [(0.475, 0.292)], works=lambda n: False)
     Bot().hunt_manual_attack(1, None)
-    assert len(clicks) == 1
+    assert len(clicks) == 6  # one candidate, then its five shifted variants
 
 
 def test_second_attack_keeps_hitting_the_first_bot(monkeypatch):
@@ -101,3 +101,12 @@ def test_health_bars_are_tried_before_name_labels(monkeypatch):
     b = Bot()
     b.hunt_manual_attack(1, None)
     assert b.moves == [(0.2, 0.2)]
+
+
+def test_a_shifted_click_is_tried_when_the_lone_bot_is_missed(monkeypatch):
+    # one candidate whose centre does nothing (diamond room: the feet are what counts)
+    clicks = patch(monkeypatch, [], [(0.42, 0.574)], works=lambda n: n >= 3)
+    b = Bot()
+    assert b.hunt_manual_attack(1, None)
+    assert len(clicks) == 3 and b.moves[0] == (0.42, 0.574) and b.moves[2] != b.moves[0]
+    assert b.fight_spot == b.moves[2]

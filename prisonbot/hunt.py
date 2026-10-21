@@ -207,7 +207,11 @@ class HuntMixin:
             log("HUNT manual attack: no bot found on the screen")
             return False
         log("HUNT manual attack candidates: %s" % ", ".join("(%.3f,%.3f)" % p for p in cands[:4]))
-        for p in cands[:4]:
+        tries = cands[:4]
+        if len(tries) < 4:  # few bots: the click may be off the body (diamond rooms: the feet), so shift the nearest one
+            tries += [(min(max(cands[0][0] + dx, 0.0), 1.0), min(max(cands[0][1] + dy, 0.0), 1.0))
+                      for dx, dy in self.AIM_VARIANTS[1:7 - len(tries)]]
+        for p in tries:
             base = grab_chat(h)
             self.hunt_move(h, *p)
             time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
@@ -232,6 +236,7 @@ class HuntMixin:
         rage = False  # the turn with the third attack has been played by hand (Ctrl+R repeats it from now on)
         total = self.OPENING  # manual attacks planned in this phase
         mine_t = -99.0
+        miss = 0  # manual attack rounds in a row where no click worked
         while True:
             if not self.wait(0.4):
                 return False
@@ -285,6 +290,14 @@ class HuntMixin:
                                 manual, bonus, rage, total = 1, True, True, self.OPENING + 1  # third attack below 50%
                                 log("HUNT health below 50%: third attack")
                             end_turn = manual == 0  # both attacks done: spend the leftover action points by ending the turn
+                            miss = 0
+                        else:
+                            miss += 1
+                            if miss % 3 == 0:  # the clicks keep hitting nothing: let the game move on instead of looping
+                                log("HUNT %d turns without a working attack click: %s" % (
+                                    miss, "Ctrl+R" if miss % 6 == 3 else "Ctrl+T"))
+                                key_combo(0x1D, 0x13 if miss % 6 == 3 else 0x14)
+                                self.fight_spot = None
                     elif end_turn:
                         log("HUNT still my turn after the attacks -> Ctrl+T (end turn)")
                         self.hunt_say("my turn: ending it (Ctrl+T)")
