@@ -88,16 +88,17 @@ def test_hud_with_two_attacks_leaves_it_to_ctrl_r_afterwards(monkeypatch):
     assert events == "AAT" + "R"
 
 
-def test_hud_attacks_at_zero_ends_the_turn_even_if_our_count_says_more(monkeypatch):
-    events = run(monkeypatch, [MINE, MINE, OTHER, OTHER, None, None, None], hp=0.9, attacks=[2, 0, 0])
-    assert events == "AT"
+def test_misread_hud_digits_do_not_cut_a_turn_short(monkeypatch):
+    # the reader takes a 2 for a 1 or a 0: only a 3 at the start of a turn is believed, the rest is our own count
+    events = run(monkeypatch, [MINE, MINE, MINE, OTHER, OTHER, None, None, None], hp=0.9, attacks=[2, 0, 0, 0])
+    assert events.startswith("AAT")
 
 
 def test_three_attacks_on_a_later_ctrl_r_turn_trigger_one_manual_turn(monkeypatch):
     # turn 1: 2 attacks by hand + Ctrl+T; turn 2 shows ATAQUES 3 (health fell below 50%): by hand again with three
     events = run(monkeypatch,
                  [MINE, MINE, MINE, OTHER, OTHER, MINE, MINE, MINE, MINE, OTHER, OTHER, None, None, None], hp=0.9,
-                 attacks=[2, 1, 1, 0, 0, 3, 2, 2, 1, 1, 0, 0])
+                 attacks=[2, 1, 0, 3, 2, 2, 1, 1, 0, 0])
     assert events.startswith("AAT") and "AAAT" in events
 
 

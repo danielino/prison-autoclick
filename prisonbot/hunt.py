@@ -298,8 +298,8 @@ class HuntMixin:
                             self.hunt_say("waiting for the enemy to finish its turn")
                             last = now - max(self.cfg["repeat_interval"], 5.0) + 1.0
                             continue
-                    third = left >= 3 if left is not None else hp < 0.5  # the third attack exists below 50% health
-                    if left is None and manual == total == self.OPENING and hp < 0.5 and not bonus:
+                    third = (left is not None and left >= 3) or hp < 0.5  # the third attack exists below 50% health
+                    if (left is None or left < 3) and manual == total == self.OPENING and hp < 0.5 and not bonus:
                         # no HUD number and below 50% health: a fresh turn has three attacks, do not wait for the
                         # second one to see it
                         manual = total = self.OPENING + 1
@@ -311,19 +311,17 @@ class HuntMixin:
                         manual = total = self.OPENING + 1
                         bonus = rage = True
                         log("HUNT three attacks available: one manual turn with all of them")
-                    if left is not None and manual > 0:
-                        manual, total = left, max(total, left)  # the HUD knows better than our count
-                        end_turn = end_turn or left == 0
-                        rage = rage or left >= 3  # a turn played by hand with three attacks is what Ctrl+R repeats next
+                    if left is not None and left >= 3 and manual > 0 and manual == total and not bonus:
+                        # the HUD shows 3 at the start of a turn: play three. Its other digits are not trusted (a 2 is
+                        # read as 1 or 3, a 1 as 0): after the first attack we count our own, never the HUD's number
+                        manual, total, bonus = left, max(total, left), True
+                        rage = True  # a turn played by hand with three attacks is what Ctrl+R repeats next
                     if manual > 0:
                         log("HUNT my turn (buttons %.3f) -> manual attack (%d left)" % (ft, manual))
                         self.hunt_say("my turn: attacking (click on the bot)")
                         if self.hunt_manual_attack(h, spot):
                             manual -= 1
-                            after = read_attacks(h)
-                            if after is not None:
-                                manual, bonus = after, True
-                            elif manual == 0 and hp < 0.5 and not bonus:
+                            if manual == 0 and hp < 0.5 and not bonus:
                                 manual, bonus, rage, total = 1, True, True, self.OPENING + 1  # third attack below 50%
                                 log("HUNT health below 50%: third attack")
                             end_turn = manual == 0  # both attacks done: spend the leftover action points by ending the turn
