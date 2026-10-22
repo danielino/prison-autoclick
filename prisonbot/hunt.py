@@ -533,6 +533,10 @@ class HuntMixin:
                 still_mine = mine or (0 < manual < total and away is not None and now - away < 8.0)
                 if still_mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
                     hp = read_health(h)
+                    if hp is None:  # unreadable: use the last value instead of acting on a guess
+                        hp = getattr(self, "last_hp", 1.0)
+                        log("HUNT the SALUD bar cannot be read: using the last value")
+                    self.last_hp = hp
                     log("HUNT health %.0f%% in the fight" % (hp * 100))
                     live.update(my_health=hp)
                     live.sample(my=hp, target=getattr(self, "live_target", None))
@@ -1064,6 +1068,16 @@ class HuntMixin:
             if self.hunt_alarm(h):  # backed off from a deadly bot (or stopped): look again
                 continue
             hp = read_health(h)
+            if hp is None:
+                # a bar that cannot be found is not 0%: do not wait for a heal that cannot be measured
+                if time.time() - getattr(self, "_hp_log", 0) > 15:
+                    self._hp_log = time.time()
+                    log("HUNT the SALUD bar cannot be read: going on without the health check")
+                    if getattr(self, "_hp_shots", 0) < 3:
+                        self._hp_shots = getattr(self, "_hp_shots", 0) + 1
+                        snapshot(h, "health-unreadable", (0.45, 0.62, 0.40, 0.38))
+                hp = 1.0
+            self.last_hp = hp
             if hp < self.cfg["hunt_min_health"]:  # a tough bot left us low: do nothing new until we have healed
                 if self.cfg.get("heal_item") and time.time() > getattr(self, "_heal_retry", 0):
                     ate = self.hunt_heal(h)

@@ -63,6 +63,9 @@ class HealMixin:
         if not item:
             return False
         hp0 = read_health(h)
+        if hp0 is None:
+            log("HUNT heal: the SALUD bar cannot be read: not eating (nothing tells how much is missing)")
+            return False
         self.hunt_say("healing (health %d%%)" % (hp0 * 100))
         ate = False
         for attempt in (1, 2):  # the 2nd attempt: the first Ctrl+1 may have CLOSED a sheet that was already open
@@ -106,7 +109,14 @@ class HealMixin:
             self.wait(1.0)
         key_combo(SC_CTRL, SC_1)  # close the sheet again
         self.wait(0.6)
-        log("HUNT heal: health %d%% -> %d%%" % (hp0 * 100, read_health(h) * 100))
+        hp1 = read_health(h)
+        for _ in range(6):  # the bar may be hidden for a moment while the sheet closes
+            if hp1 is not None or not self.wait(0.5):
+                break
+            hp1 = read_health(h)
+        log("HUNT heal: health %d%% -> %s" % (hp0 * 100, "?" if hp1 is None else "%d%%" % (hp1 * 100)))
+        if hp1 is None:
+            snapshot(h, "health-unreadable", (0.45, 0.62, 0.40, 0.38))
         return ate
 
 

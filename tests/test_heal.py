@@ -76,3 +76,20 @@ def test_heal_does_nothing_without_a_saved_food(monkeypatch):
     setup(monkeypatch, app)
     assert not app.hunt_heal(1)
     assert app.log == []
+
+
+def test_no_heal_when_the_health_bar_cannot_be_read(monkeypatch):
+    class H(heal.HealMixin):
+        def __init__(self):
+            self.cfg = {"heal_item": (0.2, 0.3)}
+            self.keys = []
+
+        def hunt_say(self, t):
+            pass
+
+        def wait(self, s):
+            return True
+    monkeypatch.setattr(heal, "read_health", lambda h: None)
+    h = H()
+    monkeypatch.setattr(heal, "key_combo", lambda a, b: h.keys.append(b))
+    assert h.hunt_heal(1) is False and h.keys == []

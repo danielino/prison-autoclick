@@ -17,7 +17,7 @@ def test_health_from_buf_half_bar():
 
 
 def test_health_from_buf_empty():
-    assert vision.health_from_buf(blank(100, 10), 100, 10, 2000) == 0.0
+    assert vision.health_from_buf(blank(100, 10), 100, 10, 2000) is None  # no bar found is not "0%"
 
 
 def test_find_labels_finds_lavender_block_only():
@@ -170,3 +170,11 @@ def test_find_bars_measures_the_health_left(monkeypatch):
     assert len(bars) == 2
     fills = sorted(round(f, 1) for p, f in vision.LAST_BARS)
     assert fills == [0.2, 1.0]
+
+
+def test_read_health_finds_a_bar_that_moved_and_says_none_when_there_is_none(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    assert vision.read_health(0) is None
+    full = int(vision.HEALTH_LEN * s.w)
+    s.paint(int(0.55 * s.w), int(0.70 * s.h), int(0.55 * s.w) + full // 2, int(0.70 * s.h) + 4, (228, 10, 1))  # outside HEALTH_AREA
+    assert vision.read_health(0) == pytest.approx(0.5, abs=0.06)

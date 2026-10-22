@@ -339,15 +339,23 @@ def health_from_buf(buf, w, hh, client_w):
         if n > best[0]:
             best = (n, x0, x1)
     if best[0] < 3:
-        return 0.0
+        return None  # no red bar at all: the bar is hidden or elsewhere, not "0%"
     return min(1.0, (best[2] - best[1] + 1) / (HEALTH_LEN * client_w))
 
 
+HEALTH_WIDE = (0.50, 0.62, 0.30, 0.36)  # where to look if the bar is not in its usual place (the chat panel moved it)
+
+
 def read_health(h):
-    fx, fy, fw, fh = HEALTH_AREA
+    """The health fraction (0..1), or None if the SALUD bar cannot be found (covered, or not where it was)."""
     x, y, w, hh = client_rect(h)
-    rw, rh = int(fw * w), int(fh * hh)
-    return health_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+    for area in (HEALTH_AREA, HEALTH_WIDE):
+        fx, fy, fw, fh = area
+        rw, rh = int(fw * w), int(fh * hh)
+        hp = health_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+        if hp is not None:
+            return hp
+    return None
 
 
 # --- UNIQUE items: the game refuses a second copy ("No puedes recoger eso porque es UNICO ...", a full red chat line).
