@@ -105,3 +105,17 @@ def test_repeated_misses_end_the_turn_instead_of_looping(monkeypatch):
     assert f.hunt_fight(1)
     ev = "".join(f.events)
     assert "xxxR" in ev and "T" in ev  # Ctrl+R after 3 misses, Ctrl+T after 6
+
+
+def test_misses_after_an_attack_in_the_turn_pass_it_with_ctrl_t_not_ctrl_r(monkeypatch):
+    # "No es posible REPETIR el turno ahora": Ctrl+R is refused once the turn has an action in it
+    f = Fight([MINE] * 40 + [None, None, None], 0.9)
+    results = iter([True])
+    f.hunt_manual_attack = lambda h, spot, r=results: (lambda ok: f.events.append("A" if ok else "x") or ok)(next(r, False))
+    monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
+    monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
+    monkeypatch.setattr(hunt, "read_health", lambda h: 0.9)
+    monkeypatch.setattr(hunt, "key_combo", lambda a, b: f.events.append({0x14: "T", 0x13: "R"}[b]))
+    assert f.hunt_fight(1)
+    ev = "".join(f.events)
+    assert ev.startswith("AxxxT")

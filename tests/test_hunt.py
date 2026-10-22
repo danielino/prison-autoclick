@@ -110,3 +110,11 @@ def test_a_shifted_click_is_tried_when_the_lone_bot_is_missed(monkeypatch):
     assert b.hunt_manual_attack(1, None)
     assert len(clicks) == 3 and b.moves[0] == (0.42, 0.574) and b.moves[2] != b.moves[0]
     assert b.fight_spot == b.moves[2]
+
+
+def test_the_last_hit_spot_is_clicked_when_no_bot_is_seen(monkeypatch):
+    clicks = patch(monkeypatch, [], [])
+    b = Bot()
+    b.fight_spot = (0.52, 0.10)
+    assert b.hunt_manual_attack(1, None)
+    assert b.moves == [(0.52, 0.10)] and clicks == ["L"]

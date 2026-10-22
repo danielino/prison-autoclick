@@ -201,6 +201,9 @@ class HuntMixin:
                     found.append(p)
             found.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
             cands += found
+        if not cands and locked:
+            log("HUNT manual attack: no bot seen, clicking where the last attack landed")
+            cands = [locked]  # the bot hit a moment ago has not gone anywhere; its bar may be hidden by the hit's effects
         if spot and not cands:
             cands = [spot]
         if not cands:
@@ -295,9 +298,16 @@ class HuntMixin:
                         else:
                             miss += 1
                             if miss % 3 == 0:  # the clicks keep hitting nothing: let the game move on instead of looping
-                                log("HUNT %d turns without a working attack click: %s" % (
-                                    miss, "Ctrl+R" if miss % 6 == 3 else "Ctrl+T"))
-                                key_combo(0x1D, 0x13 if miss % 6 == 3 else 0x14)
+                                # "No es posible REPETIR el turno ahora": Ctrl+R only works at the start of a turn, before
+                                # any action; with an attack already done in this turn only Ctrl+T can pass it
+                                acted = manual < total
+                                use_r = not acted and miss % 6 == 3
+                                log("HUNT %d turns without a working attack click: %s" % (miss, "Ctrl+R" if use_r else "Ctrl+T"))
+                                key_combo(0x1D, 0x13 if use_r else 0x14)
+                                if use_r:
+                                    sent_r = now
+                                else:
+                                    manual, total, end_turn, bonus, rage = self.OPENING, self.OPENING, False, False, False
                                 self.fight_spot = None
                     elif end_turn:
                         log("HUNT still my turn after the attacks -> Ctrl+T (end turn)")
