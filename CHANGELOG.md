@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1 - 2026-10-22
 
 ### Fixed
 - **Not entering combat**: (1) every click waited about 3 s for the vision model to read the label under the pointer, while the bot walked away; the text of a label is now remembered (by a signature of its shape, also saved for the next runs, label_cache), so the model is asked once per text, and without a model a label on a bot that was found there is let through; (2) a spot that gives no fight is ignored for 30 s, then 2 minutes, then 15 minutes (a false bot on a wall was clicked again and again); (3) up to 8 clicks on a bot instead of 4: a click that hit nothing is repeated at once on the bot's new place (4 times) before walking closer (twice at most).
