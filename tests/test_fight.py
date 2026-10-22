@@ -188,3 +188,17 @@ def test_a_repeat_with_our_attack_in_the_chat_is_left_alone(monkeypatch):
     monkeypatch.setattr(hunt, "chat_state", lambda h: "acted")
     events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 8 + [None, None, None], hp=0.9)
     assert events.startswith("AATR") and "A" not in events[4:5]
+
+
+def test_clicks_that_hit_nothing_make_the_character_walk_closer_once(monkeypatch):
+    f = Fight([MINE] * 40 + [None, None, None], 0.9)
+    f.hunt_manual_attack = lambda h, spot, n=6: f.events.append("x") or False
+    f.last_target = (0.5, 0.4)
+    walked = []
+    f.hunt_approach = lambda h, bot: walked.append(bot) or True
+    monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
+    monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
+    monkeypatch.setattr(hunt, "read_health", lambda h: 0.9)
+    monkeypatch.setattr(hunt, "key_combo", lambda a, b: f.events.append({0x14: "T", 0x13: "R"}[b]))
+    assert f.hunt_fight(1)
+    assert walked == [(0.5, 0.4)]  # on the first round without a working click, and only then

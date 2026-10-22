@@ -8,6 +8,13 @@ from prisonbot import hunt, llm
 W, H = 2000, 1000
 
 
+@pytest.fixture(autouse=True)
+def forget_spots():
+    hunt.HuntMixin.hover_memo.clear()
+    yield
+    hunt.HuntMixin.hover_memo.clear()
+
+
 class Bot(hunt.HuntMixin):
     HOVER_WAIT = 0.0
 
@@ -157,3 +164,64 @@ def test_read_hover_reads_the_label_with_the_model(monkeypatch):
     assert llm.read_hover({}, 1, (0.5, 0.5)) == ("Wild Dog", False)
     monkeypatch.setattr(llm, "ask", lambda cfg, prompt, png, kind="q": None)
     assert llm.read_hover({}, 1, (0.5, 0.5)) is None
+
+
+def test_a_refused_spot_stays_refused_without_waiting_again(monkeypatch):
+    b = Bot(DOOR)
+    screen(monkeypatch, b)
+    assert b.hunt_hover_ok(1, (0.7, 0.3)) is False
+    moves = len(b.moves)
+    assert b.hunt_hover_ok(1, (0.701, 0.301)) is False  # the same spot (within 2%): no new look
+    assert len(b.moves) == moves
+
+
+def test_a_clean_spot_is_not_checked_twice_in_a_row(monkeypatch):
+    b = Bot(DOOR)
+    screen(monkeypatch, b)
+    assert b.hunt_hover_ok(1, (0.3, 0.7)) is True
+    moves = len(b.moves)
+    assert b.hunt_hover_ok(1, (0.3, 0.7)) is True
+    assert len(b.moves) == moves
+
+
+# ---------------------------------------------------------------- doors learned from a zone change
+class Learner(Bot):
+    def __init__(self):
+        super().__init__(None)
+        self.cfg = {}
+        self.zone0 = "map-A"
+
+
+def test_the_last_clicks_are_remembered_as_doors_when_the_zone_changes(monkeypatch):
+    saved = []
+    monkeypatch.setattr(hunt, "save", lambda cfg: saved.append(1))
+    b = Learner()
+    b.note_click((0.2, 0.2))
+    b.note_click((0.65, 0.3))
+    b.note_click((0.7, 0.31))
+    b.remember_doors("map-A")
+    assert [(s["x"], s["y"]) for s in b.cfg["door_spots"]] == [(0.2, 0.2), (0.65, 0.3), (0.7, 0.31)] and saved
+
+
+def test_old_clicks_are_not_blamed(monkeypatch):
+    monkeypatch.setattr(hunt, "save", lambda cfg: None)
+    b = Learner()
+    now = [1000.0]
+    monkeypatch.setattr(hunt.time, "time", lambda: now[0])
+    b.note_click((0.2, 0.2))
+    now[0] += 120
+    b.remember_doors("map-A")
+    assert "door_spots" not in b.cfg
+
+
+def test_a_remembered_door_is_refused_in_that_zone_only(monkeypatch):
+    b = Learner()
+    b.cfg = {"door_spots": [{"map": "map-A", "x": 0.7, "y": 0.31}]}
+    monkeypatch.setattr(hunt, "zone_differs", lambda a, b_: 0.0 if a == b_ else 0.9)
+    screen(monkeypatch, b)
+    assert b.hunt_hover_ok(1, (0.71, 0.3)) is False  # next to the door, in the same zone
+    assert b.moves == []  # refused without even moving the pointer
+    assert b.hunt_hover_ok(1, (0.3, 0.7)) is True  # elsewhere in the zone
+    b.zone0 = "map-B"
+    hunt.HuntMixin.hover_memo.clear()
+    assert b.hunt_hover_ok(1, (0.71, 0.3)) is True  # another zone: the spot means nothing

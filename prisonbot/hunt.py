@@ -103,7 +103,43 @@ class HuntMixin:
     aim_pref = 0  # the variant that worked last time: tried first from then on
     manual_pref = 0  # the same for the manual attacks of a fight
 
+    DOOR_R = (0.05, 0.06)  # a remembered door spot blocks clicks this close (screen fractions, x and y)
+
+    def note_click(self, p):
+        """Remember where the last scene clicks went: if the zone changes right after, one of them was on a door."""
+        clicks = getattr(self, "recent_clicks", [])
+        clicks.append((time.time(), (p[0], p[1])))
+        self.recent_clicks = clicks[-6:]
+
+    def remember_doors(self, zone_sig):
+        """The zone changed without us wanting it: the last clicks (up to 3 of the last 40 s) are spots next to a door of
+        this zone. Saved, so that no later run clicks there."""
+        now = time.time()
+        pts = [p for t, p in getattr(self, "recent_clicks", []) if now - t < 40][-3:]
+        if not pts or zone_sig is None:
+            return
+        spots = self.cfg.setdefault("door_spots", [])
+        for p in pts:
+            spots.append({"map": zone_sig, "x": round(p[0], 3), "y": round(p[1], 3)})
+        del spots[:-60]
+        save(self.cfg)
+        log("HUNT door spots remembered for this zone: %s" % ", ".join("(%.3f,%.3f)" % p for p in pts))
+
+    def known_door(self, p):
+        """True if `p` is next to a spot where a click once took us out of this zone."""
+        spots = self.cfg.get("door_spots") if getattr(self, "cfg", None) else None
+        if not spots:
+            return False
+        zone = getattr(self, "zone0", None)
+        for s in spots:
+            if abs(s["x"] - p[0]) < self.DOOR_R[0] and abs(s["y"] - p[1]) < self.DOOR_R[1]:
+                d = zone_differs(s["map"], zone) if zone is not None else None
+                if d is not None and d <= 0.25:
+                    return True
+        return False
+
     HOVER_WAIT = 0.35  # seconds the pointer rests on a spot before the label (if any) is looked for
+    hover_memo = {}  # spot -> (valid until, safe?): a refused spot stays refused for 3 minutes
     hover_shots = 0  # screenshots saved of refused spots (a few, to see what the game showed)
     attack_refused = False  # the last attack was not made because a door or exit label was under the pointer
 
@@ -136,14 +172,24 @@ class HuntMixin:
     def hunt_hover_ok(self, h, p, what="click"):
         """True if it is safe to click at `p`: no door/exit label shows when the pointer rests there. With the vision model
         on, a label that it reads as a character or an item (not an exit) is let through."""
+        if self.known_door(p):
+            log("HUNT NOT clicking at (%.3f,%.3f): a click here once took us out of this zone (a door)" % (p[0], p[1]))
+            stats.add("clicks_refused")
+            return False
+        key = (round(p[0] / 0.02), round(p[1] / 0.02))
+        memo = HuntMixin.hover_memo.get(key)
+        if memo and time.time() < memo[0]:
+            return memo[1]  # looked at this spot a moment ago (or refused it a while ago)
         found, n = self.hunt_hover_label(h, p)
         if not found:
+            HuntMixin.hover_memo[key] = (time.time() + 15.0, True)
             return True
         log("HUNT hover check at (%.3f,%.3f): a label appeared (%d new text pixels) before the %s" % (p[0], p[1], n, what))
         cfg = getattr(self, "cfg", None) or {}
         said = llm.read_hover(cfg, h, p) if llm.active(cfg) else None
         if said is not None and said[1] is False and said[0]:
             log("HUNT the label reads %r: not an exit, going on" % said[0])
+            HuntMixin.hover_memo[key] = (time.time() + 15.0, True)
             return True
         log("HUNT NOT clicking at (%.3f,%.3f): %s" % (p[0], p[1], ("the label reads %r, an exit" % said[0]) if said else
                                                          "a label (door, exit or object) is under the pointer"))
@@ -151,6 +197,7 @@ class HuntMixin:
             HuntMixin.hover_shots += 1
             snapshot(h, "hover-label", (max(p[0] - 0.16, 0.0), max(p[1] - 0.25, 0.0), 0.32, 0.35))
         stats.add("clicks_refused")
+        HuntMixin.hover_memo[key] = (time.time() + 180.0, False)
         return False
 
     CHASE_EVERY = 3.5  # seconds of walking after a click before the bot is looked for again and clicked again
@@ -179,6 +226,7 @@ class HuntMixin:
             key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
             u32.SetCursorPos(*self.hunt_px(h, spot))
             time.sleep(0.05)
+            self.note_click(spot)
             mouse_click("L")
             # the character now WALKS to the bot and the fight starts when it arrives: keep waiting while it moves,
             # give up when it has stood still for 3 s without a fight (1.6 s if it never moved at all: the click hit
@@ -221,6 +269,7 @@ class HuntMixin:
                         log("HUNT chasing: the bot moved, clicking again at (%.3f,%.3f) (%d)" % (spot[0], spot[1], rechases))
                         u32.SetCursorPos(*self.hunt_px(h, spot))
                         time.sleep(0.05)
+                        self.note_click(spot)
                         mouse_click("L")
                         clicked = time.time()
                 if still >= (3.0 if moved else 1.6) and time.time() - t0 > 1.5:
@@ -255,6 +304,7 @@ class HuntMixin:
             log("HUNT approach: every point on the way has a label under it: not walking")
             return False
         self.hunt_move(h, px, py)
+        self.note_click((px, py))
         mouse_click("L")
         last, still, t0 = me, 0.0, time.time()
         while time.time() - t0 < 8:
@@ -374,8 +424,15 @@ class HuntMixin:
         self.live_target = fills.get(cands[0])
         # the chosen bot first, with the click point that worked last time: the body point under the bar is often not what
         # the game accepts (diamond rooms: the feet are), and a failed click must not send the attack to another bot
-        n, c0 = len(self.AIM_VARIANTS), cands[0]
-        order = [(self.manual_pref + k) % n for k in range(n if len(cands) < 2 else 4)]
+        c0 = cands[0]
+        self.last_target = c0  # where the fight loop walks to if the clicks do nothing (the bot out of range)
+        # few click points on the bot, never sprayed around it: the one that worked last, the feet, the body point. A click
+        # next to the bot can land on a door, so every point is checked first (see hunt_hover_ok).
+        order = []
+        for v in (self.manual_pref, 3, 0, 1):
+            if v not in order:
+                order.append(v)
+        order = order[:3 if len(cands) < 2 else 2]
         steps = [(c0, v) for v in order] + [(c, None) for c in cands[1:3]]
         seen = ", ".join("(%.3f,%.3f)%s" % (c[0], c[1], (" %.0f%%" % (fills[c] * 100)) if c in fills else "")
                          for c in cands[:4])
@@ -386,13 +443,17 @@ class HuntMixin:
                 p = (min(max(c[0] + dx, 0.0), 1.0), min(max(c[1] + dy, 0.0), 1.0))
             else:
                 p = c
+            if not self.hunt_hover_ok(h, p, "attack"):  # never click on a door or an exit
+                self.attack_refused = True
+                continue
             base = grab_chat(h)
             self.hunt_move(h, *p)
             time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
+            self.note_click(p)
             mouse_click("L")  # inside a fight a plain click on the bot attacks (no Ctrl+A)
-            for _ in range(6):  # an attack always writes a line in the chat: no new line = the click hit nothing
-                time.sleep(0.3)
-                if changed(base, grab_chat(h), min_frac=0.01, tol=40):
+            for _ in range(6):  # our attack writes a green line in the chat: no green line = the click hit nothing (a
+                time.sleep(0.3)  # new line of another colour, like "Entrando a ...", is not an attack)
+                if changed(base, grab_chat(h), min_frac=0.01, tol=40) and "G" in chat_recent_types(h)[-3:]:
                     log("HUNT manual attack at (%.3f,%.3f): done" % p)
                     stats.add("attacks_manual")
                     live.sample(target=fills.get(c0))
@@ -540,6 +601,12 @@ class HuntMixin:
                             manual, end_turn, miss = 0, True, 0
                         else:
                             miss += 1
+                            tgt = getattr(self, "last_target", None)
+                            if miss == 1 and tgt is not None and not self.attack_refused:
+                                # "Un Wild Dog ha escapado de tu radio de acción. Acércate más.": nothing to hit from here.
+                                # Walk closer (to a spot checked for doors) instead of clicking around the bot.
+                                log("HUNT the clicks hit nothing: the bot may be out of range, walking closer")
+                                self.hunt_approach(h, tgt)
                             if miss % 3 == 0:  # the clicks keep hitting nothing: let the game move on instead of looping
                                 # "No es posible REPETIR el turno ahora": Ctrl+R only works at the start of a turn, before
                                 # any action; with an attack already done in this turn only Ctrl+T can pass it
@@ -737,6 +804,7 @@ class HuntMixin:
                 log("HUNT zone map looked different for a moment: ignored")
                 return False
         log("HUNT zone map changed: stopping")
+        self.remember_doors(zone0)  # if a click took us out, it will not be made again
         self.halt("Zone changed (did you die?): hunt stopped")
         return True
 
@@ -978,7 +1046,7 @@ class HuntMixin:
         if self.cfg.get("llm_enabled"):
             llm.start_warm_up(self.cfg)  # load the vision model now, not in the middle of a fight
         log("HUNT start area=%s gap=%s walk=%s" % (self.cfg["hunt_area"], self.cfg["hunt_gap"], self.cfg["hunt_walk"]))
-        zone0 = grab_zone(h)  # the zone name on top: if it changes we died / left the zone
+        zone0 = self.zone0 = grab_zone(h)  # the zone name on top: if it changes we died / left the zone
         home = read_minimap(*grab_minimap(h))[0]  # where we started, on the minimap
         self.home = self.safe_pos = home
         log("HUNT home on minimap: %s" % (home,))

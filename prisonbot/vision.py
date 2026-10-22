@@ -503,6 +503,14 @@ def chat_state_from_buf(buf, w, hh, client_w):
     return "acted" if types else None
 
 
+def chat_recent_types(h):
+    """The game messages among the last chat lines, oldest first (letters Y, R, G, B: see _chat_line_types)."""
+    fx, fy, fw, fh = CHAT_LINES
+    x, y, w, hh = client_rect(h)
+    rw, rh = int(fw * w), int(fh * hh)
+    return _chat_line_types(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+
+
 def chat_owner_from_buf(buf, w, hh, client_w):
     """"mine" / "theirs" / None (see chat_state_from_buf; a refused command still leaves the turn ours)."""
     s = chat_state_from_buf(buf, w, hh, client_w)

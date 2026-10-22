@@ -19,6 +19,8 @@ def patch(monkeypatch, bots, bars, works=lambda n: True, me=None):
     monkeypatch.setattr(hunt, "grab_chat", lambda h: b"")
     monkeypatch.setattr(hunt, "changed", lambda a, b, **k: bool(clicks) and works(len(clicks)))
     monkeypatch.setattr(hunt.time, "sleep", lambda s: None)
+    monkeypatch.setattr(hunt, "chat_recent_types", lambda h: ["R", "G"])  # our attack line is the newest
+    monkeypatch.setattr(hunt.HuntMixin, "hunt_hover_ok", lambda self, h, p, what="click": True)  # (see test_hover.py)
     return clicks
 
 
@@ -58,22 +60,22 @@ def test_manual_attack_picks_the_bot_nearest_to_the_spot(monkeypatch):
 
 
 def test_manual_attack_tries_the_next_candidate_after_shifting_the_first(monkeypatch):
-    clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: n >= 5)
+    clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: n >= 3)
     b = Bot()
     assert b.hunt_manual_attack(1, (0.5, 0.3))
-    assert b.moves[0] == (0.5, 0.3) and b.moves[-1] == (0.2, 0.7) and len(clicks) == 5
+    assert b.moves[0] == (0.5, 0.3) and b.moves[-1] == (0.2, 0.7) and len(clicks) == 3
 
 
 def test_manual_attack_fails_when_no_click_has_an_effect(monkeypatch):
     clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: False)
     assert not Bot().hunt_manual_attack(1, None)
-    assert len(clicks) == 5  # four clicks around the chosen bot, then the other one
+    assert len(clicks) == 3  # two clicks on the chosen bot (never sprayed around it), then the other one
 
 
 def test_label_and_bar_of_the_same_bot_are_one_candidate(monkeypatch):
     clicks = patch(monkeypatch, [(0.47, 0.29)], [(0.475, 0.292)], works=lambda n: False)
     Bot().hunt_manual_attack(1, None)
-    assert len(clicks) == 6  # one candidate, then its five shifted variants
+    assert len(clicks) == 3  # one candidate: three click points on it, no more
 
 
 def test_second_attack_keeps_hitting_the_first_bot(monkeypatch):
@@ -154,14 +156,14 @@ def test_the_weakest_bot_stays_the_target_until_it_dies_then_the_next_weakest(mo
 
 def test_a_missed_click_is_shifted_on_the_same_bot_before_trying_another(monkeypatch):
     # the body point under the bar of the weak bot does not register (the feet do): never fall to the full bot on the right
-    patch(monkeypatch, [], [(0.47, 0.25), (0.53, 0.08)], works=lambda n: n == 4)
+    patch(monkeypatch, [], [(0.47, 0.25), (0.53, 0.08)], works=lambda n: n == 2)
     monkeypatch.setattr(hunt, "LAST_BARS", [((0.47, 0.25), 0.36), ((0.53, 0.08), 1.0)])
     b = Bot()
     assert b.hunt_manual_attack(1, None)
-    assert all(abs(p[0] - 0.47) < 0.05 for p in b.moves) and len(b.moves) == 4
+    assert all(abs(p[0] - 0.47) < 0.05 for p in b.moves) and len(b.moves) == 2
     assert b.manual_pref == 3  # (0, +0.045): the feet; the next attack starts there
     b.hunt_manual_attack(1, None)
-    assert b.moves[4] == (0.47, 0.25 + 0.045)
+    assert b.moves[2] == (0.47, 0.25 + 0.045)
 
 def test_the_health_is_compared_at_every_attack_and_a_clearly_weaker_bot_takes_over(monkeypatch):
     patch(monkeypatch, [], [(0.47, 0.25), (0.53, 0.08)])
@@ -179,3 +181,28 @@ def test_a_small_difference_does_not_change_the_target(monkeypatch):
     b.fight_spot = (0.47, 0.25)
     b.hunt_manual_attack(1, None)
     assert b.moves[0][0] < 0.5
+
+
+def test_every_click_of_a_manual_attack_is_checked_for_a_door(monkeypatch):
+    clicks = patch(monkeypatch, [], [(0.47, 0.25)], works=lambda n: True)
+    checked = []
+    monkeypatch.setattr(hunt.HuntMixin, "hunt_hover_ok", lambda self, h, p, what="click": checked.append(p) or p[1] < 0.3)
+    b = Bot()
+    assert b.hunt_manual_attack(1, None)  # the body point is fine; (the feet at +0.045 would be refused, never reached)
+    assert checked and len(clicks) == 1
+
+
+def test_a_door_next_to_the_bot_is_never_clicked_even_when_every_point_is_refused(monkeypatch):
+    clicks = patch(monkeypatch, [], [(0.47, 0.25)], works=lambda n: True)
+    monkeypatch.setattr(hunt.HuntMixin, "hunt_hover_ok", lambda self, h, p, what="click": False)
+    b = Bot()
+    assert not b.hunt_manual_attack(1, None)
+    assert clicks == [] and b.attack_refused is True
+
+
+def test_a_line_that_is_not_our_attack_does_not_count_as_a_hit(monkeypatch):
+    # "Entrando a CELDAS..." changes the chat but it is not an attack line: the click did not hit the bot
+    clicks = patch(monkeypatch, [], [(0.47, 0.25)], works=lambda n: True)
+    monkeypatch.setattr(hunt, "chat_recent_types", lambda h: ["R", "R", "Y"])
+    assert not Bot().hunt_manual_attack(1, None)
+    assert len(clicks) == 3  # every point tried, none counted
