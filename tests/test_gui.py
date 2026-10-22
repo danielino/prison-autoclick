@@ -80,3 +80,26 @@ def test_turning_the_helper_off_greys_out_its_settings(app):
     g.apply()
     assert app.cfg["llm_enabled"] is False
     assert all(str(w.cget("state")) == "disabled" for w, _ in g.llm_fields)
+
+
+def test_auto_heal_is_on_by_default_and_can_be_turned_off(app):
+    from prisonbot import config
+    assert config.DEFAULTS["auto_heal"] is True
+    g = app.gui
+    assert g.healvar.get() is True
+    g.healvar.set(False)
+    g.apply()
+    assert app.cfg["auto_heal"] is False
+    g.healvar.set(True)
+    g.apply()
+    assert app.cfg["auto_heal"] is True
+
+
+def test_the_layout_option_of_the_vision_tab_is_saved(app):
+    g = app.gui
+    assert g.layoutvar.get() is True  # on by default (it only matters when the vision model is on)
+    g.layoutvar.set(False)
+    g.apply()
+    assert app.cfg["llm_layout"] is False
+    g.layoutvar.set(True)
+    g.apply()

@@ -3,8 +3,8 @@ on a screen size other than the one it was calibrated on."""
 import os, time
 from .config import HERE, log
 from .vision import (client_rect, detect, find_bars, find_bots, read_attacks, read_health, chat_turn_is_mine,
-                     LAST_BARS)
-from . import llm
+                     LAST_BARS, scan_layout, NOMINAL_BAR_Y)
+from . import llm, layout
 
 REF = (2360, 1328)  # the window size the colour detectors were measured on
 APP = "AutoPrison"
@@ -59,6 +59,12 @@ def save_report(h, cfg):
         lines.append("  health left of each: %s" % ", ".join("%.0f%%" % (f * 100) for p, f in LAST_BARS))
     bots = _try(find_bots, h)
     lines.append("name labels: %s" % (bots if isinstance(bots, str) else ", ".join("(%.3f,%.3f)" % p for p in bots)))
+    lay = _try(scan_layout, h)
+    lines.append("bottom HUD (SALUD bar) y: %s" % (lay if isinstance(lay, str) else
+                 "%.3f (calibrated %.3f, shift %+.3f)%s" % (lay["bar_y"], NOMINAL_BAR_Y, lay["shift"], "" if lay["found"] else " - NOT FOUND")))
+    if layout.REPORT:
+        lines.append("vision model's reading of the screen sections:")
+        lines += ["  " + r for r in layout.REPORT]
     lines.append("attacks left (ATAQUES digit): %s" % _try(read_attacks, h))
     lines.append("own health (SALUD bar): %s" % _try(read_health, h))
     lines.append("chat says it is our turn: %s" % _try(chat_turn_is_mine, h))

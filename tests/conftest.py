@@ -22,3 +22,16 @@ def blank(w, h, rgb=(40, 40, 40)):
     buf = bytearray(w * h * 4)
     paint(buf, w, 0, 0, w, h, rgb)
     return buf
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def reset_hud_position():
+    from prisonbot import vision
+    vision.HUD["bar_y"] = vision.NOMINAL_BAR_Y
+    vision.AREAS.clear()
+    yield
+    vision.HUD["bar_y"] = vision.NOMINAL_BAR_Y
+    vision.AREAS.clear()

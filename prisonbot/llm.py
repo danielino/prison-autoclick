@@ -307,3 +307,69 @@ def read_hover(cfg, h, p):
     is_exit = answer.get("is_exit")
     log("LLM reads the label under the pointer: %r exit=%s" % (text[:60], is_exit))
     return text, (is_exit is True or str(is_exit).lower() == "true")
+
+
+LAYOUT_PROMPT = (
+    "This is a screenshot of a game window. Locate these interface elements. Answer ONLY with JSON in which every value is "
+    "a box [x0, y0, x1, y1] given as fractions of the image width and height (0 to 1), or null if the element is not "
+    "visible: "
+    "\"health_bar\": the red bar next to the label SALUD in the bottom toolbar; "
+    "\"bottom_bar\": the whole bottom toolbar strip (the GENERAL or COMBATE banner is in its middle); "
+    "\"chat\": the chat text panel under the bottom toolbar; "
+    "\"minimap\": the minimap panel at the top right, frame included; "
+    "\"top_bar\": the toolbar along the top edge; "
+    "\"attacks_box\": the small box labelled ATAQUES at the top left (only shown in a fight); "
+    "\"turn_buttons\": the group of round buttons R, T, H, F (only shown in a fight).")
+LAYOUT_KEYS = ("health_bar", "bottom_bar", "chat", "minimap", "top_bar", "attacks_box", "turn_buttons")
+
+
+def wait_ready(cfg, timeout=90.0):
+    """Wait (up to `timeout` s) for the model to be loaded; loads it if nobody did. True if it is ready."""
+    if _state == "cold":
+        start_warm_up(cfg)
+    end = time.time() + timeout
+    while _state == "warming" and time.time() < end:
+        time.sleep(0.3)
+    return _state == "ready"
+
+
+def _norm_box(box, w, h):
+    """A box as the model gave it -> (x0, y0, x1, y1) fractions, or None. Accepts fractions, a 0..1000 scale (what some
+    models use for boxes) and pixels of the image sent."""
+    try:
+        x0, y0, x1, y1 = [float(v) for v in box]
+    except (TypeError, ValueError):
+        return None
+    top = max(x0, y0, x1, y1)
+    if top > 1.5:
+        if top <= 1000:
+            x0, y0, x1, y1 = x0 / 1000.0, y0 / 1000.0, x1 / 1000.0, y1 / 1000.0
+        else:
+            x0, y0, x1, y1 = x0 / w, y0 / h, x1 / w, y1 / h
+    x0, x1, y0, y1 = max(min(x0, x1), 0.0), min(max(x0, x1), 1.0), max(min(y0, y1), 0.0), min(max(y0, y1), 1.0)
+    if x1 - x0 < 0.01 or y1 - y0 < 0.005:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def analyze_layout(cfg, h):
+    """Ask the model where the sections of the screen are. -> {name: (x0, y0, x1, y1) fractions} for the ones it found
+    (possibly empty), or None if it did not answer."""
+    if not cfg.get("llm_enabled"):
+        return None
+    if not wait_ready(cfg):
+        log("LLM layout: the model is not ready")
+        return None
+    x, y, w, hh = client_rect(h)
+    max_w = int(cfg.get("llm_max_width", 1024))
+    iw, ih = min(w, max_w), int(hh * min(w, max_w) / float(w))
+    answer = ask(cfg, LAYOUT_PROMPT, screen_png(h, cfg), "screen sections")
+    if not answer:
+        return None
+    boxes = {}
+    for key in LAYOUT_KEYS:
+        b = _norm_box(answer.get(key), iw, ih) if answer.get(key) else None
+        if b:
+            boxes[key] = b
+    log("LLM layout: " + ", ".join("%s=(%.2f,%.2f,%.2f,%.2f)" % ((k,) + v) for k, v in boxes.items()))
+    return boxes

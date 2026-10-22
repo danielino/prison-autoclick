@@ -5,7 +5,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm, diagnostic, stats, live
+from . import llm, diagnostic, stats, live, layout
 
 
 class HuntMixin:
@@ -56,6 +56,29 @@ class HuntMixin:
         x, y, w, hh = client_rect(h)
         u32.SetCursorPos(x + int(fx * w), y + int(fy * hh))
         time.sleep(0.12)
+
+    def hunt_layout(self, h, why):
+        """Find the sections of the screen that move (the bottom HUD, with the banner and the health bar, goes up and down
+        when the chat panel is resized) and say where they are. Called at the start; afterwards every read of the health
+        bar follows the HUD and notices when it moves (see hunt_layout_moved)."""
+        lay = scan_layout(h)
+        self._layout_y = lay["bar_y"]
+        live.update(layout={k: (round(v, 3) if isinstance(v, float) else v) for k, v in lay.items()})
+        if lay["found"]:
+            log("LAYOUT (%s) bottom HUD at y=%.3f (calibrated %.3f, shift %+.3f): the scene ends at y=%.3f, the chat starts at y=%.3f"
+                % (why, lay["bar_y"], NOMINAL_BAR_Y, lay["shift"], lay["scene_bottom"], lay["chat_top"]))
+        else:
+            log("LAYOUT (%s) the SALUD bar was not found: using the calibrated places until it shows" % why)
+            snapshot(h, "layout-unknown", (0.40, 0.55, 0.60, 0.45))
+        return lay
+
+    def hunt_layout_moved(self, h):
+        """After a read of the health bar: did the bottom HUD move (the player resized the chat panel)? Log it."""
+        y = HUD["bar_y"]
+        if abs(y - getattr(self, "_layout_y", y)) > 0.01:
+            log("LAYOUT the bottom HUD moved: y=%.3f -> %.3f (shift %+.3f): the zones follow" % (self._layout_y, y, hud_shift()))
+            self._layout_y = y
+            live.update(layout={"found": True, "bar_y": round(y, 3), "shift": round(hud_shift(), 3)})
 
     def hunt_in_combat(self, h):
         """(in combat?, banner fraction, turn-buttons fraction). Either cue counts: the red COMBATE banner or the
@@ -475,6 +498,9 @@ class HuntMixin:
         """The fight (see hunt_fight_loop), with its state published for the live web page."""
         live.fight_start()
         self.live_target = None
+        if (self.cfg.get("llm_enabled") and self.cfg.get("llm_layout", True) and not getattr(self, "_layout_fight", False)):
+            self._layout_fight = True  # once per run: the fight-only boxes (ATAQUES, the turn buttons) are on screen now
+            live.update(layout_model=layout.analyze_and_apply(self.cfg, h, "fight"))
         try:
             return self.hunt_fight_loop(h, spot)
         finally:
@@ -537,6 +563,7 @@ class HuntMixin:
                         hp = getattr(self, "last_hp", 1.0)
                         log("HUNT the SALUD bar cannot be read: using the last value")
                     self.last_hp = hp
+                    self.hunt_layout_moved(h)
                     log("HUNT health %.0f%% in the fight" % (hp * 100))
                     live.update(my_health=hp)
                     live.sample(my=hp, target=getattr(self, "live_target", None))
@@ -1047,6 +1074,12 @@ class HuntMixin:
         chase = 0  # approach steps towards bots outside the area since the last target
         bad, tried = [], []  # (fx, fy, until): spots where an attack did not start a fight / minimap targets done
         diagnostic.log_window(h)  # the window size goes to the log (and a warning if it is not 16:9)
+        self.hunt_layout(h, "start")
+        self._layout_fight = False
+        if self.cfg.get("llm_enabled") and self.cfg.get("llm_layout", True):
+            # the vision model looks at the screen and says where the sections are; the colours check what it says
+            self.hunt_say("asking the vision model where the sections of the screen are")
+            live.update(layout_model=layout.analyze_and_apply(self.cfg, h, "start"))
         if self.cfg.get("llm_enabled"):
             llm.start_warm_up(self.cfg)  # load the vision model now, not in the middle of a fight
         log("HUNT start area=%s gap=%s walk=%s" % (self.cfg["hunt_area"], self.cfg["hunt_gap"], self.cfg["hunt_walk"]))
@@ -1078,8 +1111,9 @@ class HuntMixin:
                         snapshot(h, "health-unreadable", (0.45, 0.62, 0.40, 0.38))
                 hp = 1.0
             self.last_hp = hp
+            self.hunt_layout_moved(h)
             if hp < self.cfg["hunt_min_health"]:  # a tough bot left us low: do nothing new until we have healed
-                if self.cfg.get("heal_item") and time.time() > getattr(self, "_heal_retry", 0):
+                if self.cfg.get("auto_heal", True) and self.cfg.get("heal_item") and time.time() > getattr(self, "_heal_retry", 0):
                     ate = self.hunt_heal(h)
                     stats.add("heals" if ate else "heal_failed")
                     if not self.alive():
@@ -1094,7 +1128,7 @@ class HuntMixin:
                 if not self.wait(1.5):
                     return
                 continue
-            self.hunt_move(h, *park)
+            self.hunt_move(h, 0.55, min(HUD["bar_y"] + 0.11, 0.97))  # parked over the chat, wherever the chat is
             bad = [b for b in bad if b[2] > time.time()]
             bots, seen = self.hunt_candidates(h, bad)
             if not bots:

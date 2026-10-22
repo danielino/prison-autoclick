@@ -5,6 +5,15 @@ from .config import *
 from .winapi import *
 
 
+# Areas the layout analysis may have corrected for this screen (see layout.py): name -> (fx, fy, fw, fh). The calibrated
+# values stay the default; a detector asks area(name, default).
+AREAS = {}
+
+
+def area(name, default):
+    return AREAS.get(name, default)
+
+
 # --- screen detectors for auto-hunt (colour heuristics measured on real game screenshots, 2360x1328 layout)
 def _red(r, g, b):  # the "COMBATE" banner (it reads "GENERAL" in grey outside combat)
     return r > 170 and g < 110 and b < 90
@@ -134,6 +143,7 @@ def sig_similar(a, b):
 def find_bots(h):
     """Living bots on screen, as client-area fractions of a point on their body, nearest to the player first."""
     fx, fy, fw, fh = LABEL_AREA
+    fh += min(hud_shift(), 0.0)  # a taller chat panel pushes the HUD (and its "ABS 100%" text) up into the scene
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     buf = grab(x + int(fx * w), y + int(fy * hh), rw, rh)
@@ -164,6 +174,7 @@ def find_bars(h):
     """Fallback inside a fight, where the name label is drawn in another colour: the red health bars shown under
     every combatant. -> body points (client fractions) of the bars that are not yours, nearest to the centre first."""
     fx, fy, fw, fh = BAR_AREA
+    fh += min(hud_shift(), 0.0)  # (the player's own SALUD bar must not be taken for a bot's)
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     buf = grab(x + int(fx * w), y + int(fy * hh), rw, rh)
@@ -312,7 +323,7 @@ def attacks_from_buf(buf, w, hh):
 
 
 def read_attacks(h):
-    fx, fy, fw, fh = ATTACKS_AREA
+    fx, fy, fw, fh = area("attacks", ATTACKS_AREA)
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     return attacks_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh)
@@ -324,9 +335,10 @@ HEALTH_AREA = (0.62, 0.76, 0.08, 0.14)  # the bottom bar moves a little when the
 HEALTH_LEN = 0.0497  # full bar length as a fraction of the client width
 
 
-def health_from_buf(buf, w, hh, client_w):
-    """Fill fraction (0..1) of the health bar inside a grabbed region. The row with most red pixels is the bar."""
-    best = (0, 0, 0)
+def health_bar_from_buf(buf, w, hh, client_w):
+    """(fill fraction 0..1, row of the bar in the region) or None if there is no red bar. The row with most red pixels
+    is the bar."""
+    best = (0, 0, 0, 0)
     for y in range(hh):
         base = y * w * 4
         n, x0, x1 = 0, None, 0
@@ -337,24 +349,62 @@ def health_from_buf(buf, w, hh, client_w):
                 x0 = x if x0 is None else x0
                 x1 = x
         if n > best[0]:
-            best = (n, x0, x1)
+            best = (n, x0, x1, y)
     if best[0] < 3:
         return None  # no red bar at all: the bar is hidden or elsewhere, not "0%"
-    return min(1.0, (best[2] - best[1] + 1) / (HEALTH_LEN * client_w))
+    return min(1.0, (best[2] - best[1] + 1) / (HEALTH_LEN * client_w)), best[3]
 
 
-HEALTH_WIDE = (0.50, 0.62, 0.30, 0.36)  # where to look if the bar is not in its usual place (the chat panel moved it)
+def health_from_buf(buf, w, hh, client_w):
+    """Fill fraction (0..1) of the health bar inside a grabbed region, or None if there is no bar."""
+    found = health_bar_from_buf(buf, w, hh, client_w)
+    return None if found is None else found[0]
+
+
+HEALTH_WIDE = (0.50, 0.55, 0.30, 0.43)  # where to look if the bar is not where it was last seen
+
+# The bottom HUD (health bar, the GENERAL / COMBATE banner) sits higher when the chat panel is taller, which is a setting
+# of the player. Every read of the health bar tells where it is, and the zones that depend on it follow.
+NOMINAL_BAR_Y = 0.826  # client fraction of the SALUD bar with the chat panel as it was when the detectors were measured
+HUD = {"bar_y": NOMINAL_BAR_Y}
+
+
+def hud_shift():
+    """How far the bottom HUD is from its calibrated place, as a fraction of the client height (negative = higher)."""
+    return HUD["bar_y"] - NOMINAL_BAR_Y
+
+
+def scan_layout(h):
+    """Find where the bottom HUD is on this screen right now (nothing is assumed: the whole lower part of the screen is
+    searched for the SALUD bar). -> dict(found, bar_y, shift, scene_bottom, chat_top). The player can raise and lower
+    the chat panel at any time, so this is also redone whenever the bar is read."""
+    HUD["bar_y"] = NOMINAL_BAR_Y  # forget the last place: start from the wide search
+    found = False
+    x, y, w, hh = client_rect(h)
+    fx, fy, fw, fh = HEALTH_WIDE
+    rw, rh = int(fw * w), int(fh * hh)
+    got = health_bar_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+    if got is not None:
+        HUD["bar_y"] = min(max(fy + got[1] / float(rh) * fh, 0.5), 0.97)
+        found = True
+    return {"found": found, "bar_y": HUD["bar_y"], "shift": hud_shift(), "scene_bottom": min(0.74, HUD["bar_y"] - 0.086),
+            "chat_top": min(HUD["bar_y"] + 0.045, 0.95)}
 
 
 def read_health(h):
     """The health fraction (0..1), or None if the SALUD bar cannot be found (covered, or not where it was)."""
     x, y, w, hh = client_rect(h)
-    for area in (HEALTH_AREA, HEALTH_WIDE):
+    by = HUD["bar_y"]
+    for area in ((HEALTH_AREA[0], by - 0.07, HEALTH_AREA[2], 0.14), HEALTH_AREA, HEALTH_WIDE):
         fx, fy, fw, fh = area
-        rw, rh = int(fw * w), int(fh * hh)
-        hp = health_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
-        if hp is not None:
-            return hp
+        fy = max(fy, 0.0)
+        rw, rh = int(fw * w), int(min(fh, 1.0 - fy) * hh)
+        if rw <= 0 or rh <= 0:
+            continue
+        found = health_bar_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+        if found is not None:
+            HUD["bar_y"] = min(max(fy + found[1] / float(rh) * min(fh, 1.0 - fy), 0.5), 0.97)
+            return found[0]
     return None
 
 
@@ -511,9 +561,16 @@ def chat_state_from_buf(buf, w, hh, client_w):
     return "acted" if types else None
 
 
+def _chat_lines_area():
+    """The last chat lines, below the bottom HUD wherever it is (a short chat panel puts the HUD low)."""
+    fx, fy, fw, fh = CHAT_LINES
+    top = max(fy, min(HUD["bar_y"] + 0.045, 0.95))
+    return fx, top, fw, max(fy + fh - top, 0.03)
+
+
 def chat_recent_types(h):
     """The game messages among the last chat lines, oldest first (letters Y, R, G, B: see _chat_line_types)."""
-    fx, fy, fw, fh = CHAT_LINES
+    fx, fy, fw, fh = _chat_lines_area()
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     return _chat_line_types(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
@@ -526,7 +583,7 @@ def chat_owner_from_buf(buf, w, hh, client_w):
 
 
 def chat_state(h):
-    fx, fy, fw, fh = CHAT_LINES
+    fx, fy, fw, fh = _chat_lines_area()
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     return chat_state_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
@@ -582,6 +639,8 @@ def find_loot(h):
 
 def detect(h, name):
     fx, fy, fw, fh, test, need = DETECT[name]
+    if name == "combat":
+        fy = min(max(fy + hud_shift(), 0.0), 1.0 - fh)  # the banner is part of the bottom HUD
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     buf = grab(x + int(fx * w), y + int(fy * hh), rw, rh)

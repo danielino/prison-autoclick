@@ -81,10 +81,12 @@ class Gui:
         self.patrolvar = tk.BooleanVar(value=bool(self.cfg["hunt_patrol"]))
         self.homevar = tk.BooleanVar(value=bool(self.cfg["hunt_home"]))
         self.destroyvar = tk.BooleanVar(value=bool(self.cfg["hunt_destroy_unique"]))
+        self.healvar = tk.BooleanVar(value=bool(self.cfg.get("auto_heal", True)))  # on unless the player turned it off
         self.llmvar = tk.BooleanVar(value=bool(self.cfg.get("llm_enabled")))
         self.llmurl = tk.StringVar(value=self.cfg.get("ollama_url", llm.DEFAULT_URL))
         self.llmmodel = tk.StringVar(value=self.cfg.get("ollama_model", llm.DEFAULT_MODEL))
         self.llmmode = tk.StringVar(value=self.cfg.get("llm_mode", "assist"))
+        self.layoutvar = tk.BooleanVar(value=bool(self.cfg.get("llm_layout", True)))
         self.llmtimeout = tk.StringVar(value="%g" % self.cfg.get("llm_timeout", 20))
         self.llmwidth = tk.StringVar(value=str(int(self.cfg.get("llm_max_width", 1024))))
         self.statsint = tk.StringVar(value="%g" % self.cfg.get("stats_interval", 5))
@@ -118,16 +120,19 @@ class Gui:
 
         care = ttk.LabelFrame(tab_hunt, text="Health and loot")
         care.pack(fill="x", padx=10, pady=4)
-        ttk.Label(care, text="Heal (or wait) while health is below (%)").grid(
-            row=0, column=0, padx=8, pady=(6, 0), sticky="w")
-        self.spin(care, self.hmin, 0, 100, 5, 6, self.apply).grid(row=0, column=1, pady=(6, 0), sticky="w")
+        ttk.Checkbutton(care, variable=self.healvar, command=self.apply, text=(
+            "Auto-heal: eat the chosen food when the health is below the limit (otherwise the bot just waits for it)")).grid(
+            row=0, column=0, columnspan=3, padx=8, pady=(6, 0), sticky="w")
+        ttk.Label(care, text="Health limit (%): below it the bot heals or waits").grid(
+            row=1, column=0, padx=8, pady=(6, 0), sticky="w")
+        self.spin(care, self.hmin, 0, 100, 5, 6, self.apply).grid(row=1, column=1, pady=(6, 0), sticky="w")
         self.hfood = ttk.Label(care, foreground="gray")
-        self.hfood.grid(row=1, column=0, columnspan=3, padx=8, pady=(2, 0), sticky="w")
-        ttk.Label(care, text="Pause before the next /loot (s)").grid(row=2, column=0, padx=8, pady=(6, 0), sticky="w")
-        self.spin(care, self.lootwait, 0, 10, 0.5, 6, self.apply).grid(row=2, column=1, pady=(6, 0), sticky="w")
+        self.hfood.grid(row=2, column=0, columnspan=3, padx=8, pady=(2, 0), sticky="w")
+        ttk.Label(care, text="Pause before the next /loot (s)").grid(row=3, column=0, padx=8, pady=(6, 0), sticky="w")
+        self.spin(care, self.lootwait, 0, 10, 0.5, 6, self.apply).grid(row=3, column=1, pady=(6, 0), sticky="w")
         ttk.Checkbutton(care, variable=self.destroyvar, command=self.apply, text=(
             "Destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up")).grid(
-            row=3, column=0, columnspan=3, padx=8, pady=(6, 8), sticky="w")
+            row=4, column=0, columnspan=3, padx=8, pady=(6, 8), sticky="w")
         scr = ttk.LabelFrame(tab_hunt, text="Screen size")
         scr.pack(fill="x", padx=10, pady=4)
         self.sizeinfo = ttk.Label(scr, foreground="gray", wraplength=520, justify="left")
@@ -201,6 +206,7 @@ class Gui:
             self.cfg["hunt_min_health"] = min(max(float(self.hmin.get().replace(",", ".")), 0), 100) / 100
             self.cfg["loot_again_delay"] = min(max(float(self.lootwait.get().replace(",", ".")), 0), 10)
             self.cfg["hunt_destroy_unique"] = bool(self.destroyvar.get())
+            self.cfg["auto_heal"] = bool(self.healvar.get())
             self.cfg["hunt_walk"] = bool(self.walkvar.get())
             self.cfg["hunt_home"] = bool(self.homevar.get())
             self.cfg["hunt_patrol"] = bool(self.patrolvar.get())
@@ -214,6 +220,7 @@ class Gui:
             self.cfg["ollama_url"] = self.llmurl.get().strip() or llm.DEFAULT_URL
             self.cfg["ollama_model"] = self.llmmodel.get().strip() or llm.DEFAULT_MODEL
             self.cfg["llm_mode"] = self.llmmode.get() if self.llmmode.get() in ("assist", "decide") else "assist"
+            self.cfg["llm_layout"] = bool(self.layoutvar.get())
             sig = (self.cfg["ollama_url"], self.cfg["ollama_model"])
             if sig != getattr(self, "_llm_sig", sig):
                 llm.reset()  # a changed address or model: the new one has to be loaded
@@ -392,7 +399,11 @@ class Gui:
         self.llmbar = ttk.Progressbar(box, length=300, maximum=100)
         self.llmbar.grid(row=5, column=2, columnspan=2, padx=8, pady=(10, 4), sticky="w")
         self.llminfo = ttk.Label(box, foreground="gray", wraplength=680, justify="left", text="")
-        self.llminfo.grid(row=6, column=0, columnspan=4, padx=8, pady=(2, 8), sticky="w")
+        self.llminfo.grid(row=6, column=0, columnspan=4, padx=8, pady=(2, 4), sticky="w")
+        c_layout = ttk.Checkbutton(box, variable=self.layoutvar, command=self.apply, text=(
+            "When the hunt starts (and in the first fight) ask the model where the sections of the screen are "
+            "(health bar, minimap, ATAQUES box); the colours check its answer"))
+        c_layout.grid(row=7, column=0, columnspan=4, padx=8, pady=(0, 8), sticky="w")
         ttk.Label(tab, foreground="gray", wraplength=720, justify="left", text=(
             "assist: the colour detectors choose the bot; the model only breaks ties or helps when the health bars cannot "
             "be measured.\ndecide: the model's choice wins.\nAny error or odd answer just means no hint, and after 3 "
@@ -402,7 +413,8 @@ class Gui:
         self.llm_job = None
         self.llm_names = ()
         self.llm_fields = [(eu, "normal"), (self.llmbox, "normal"), (cm, "readonly"), (b_test, "normal"), (b_list, "normal"),
-                           (b_pull, "normal"), (s_time, "normal"), (s_width, "normal"), (b_screen, "normal")]
+                           (b_pull, "normal"), (s_time, "normal"), (s_width, "normal"), (b_screen, "normal"),
+                           (c_layout, "normal")]
         self.llm_switch()
 
     def llm_switch(self):

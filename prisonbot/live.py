@@ -12,7 +12,7 @@ _series = collections.deque(maxlen=300)  # (time, my health, target health) samp
 def _fresh():
     return {"running": False, "status": "", "in_fight": False, "fight_no": 0, "fight_t0": None, "turn": None,
             "attacks_left": None, "my_health": None, "bots": [], "target": None, "last_action": "",
-            "last_action_t": None, "last_fight_seconds": None, "since": None}
+            "last_action_t": None, "last_fight_seconds": None, "since": None, "layout": None, "layout_model": []}
 
 
 _state = _fresh()
@@ -136,7 +136,7 @@ def snapshot(events=60):
              "last_seconds": s["last_fight_seconds"]}
     out = {"now": round(now, 1), "running": s["running"], "status": s["status"], "fight": fight,
            "last_action": s["last_action"], "last_action_age": round(now - s["last_action_t"]) if s["last_action_t"] else None,
-           "series": ser, "events": ev, "stats": stats.as_dict()}
+           "series": ser, "events": ev, "stats": stats.as_dict(), "layout": s["layout"], "layout_model": s["layout_model"]}
     try:
         from . import llm
         if llm.STATS["asks"]:

@@ -95,7 +95,7 @@ def map_area(h):
     c = _map_cache.get(h)
     if c and now - c[0] < 1.5:
         return c[1]
-    fx, fy, fw, fh = MAP_AREA
+    fx, fy, fw, fh = base = area("minimap", MAP_AREA)
     x, y, w, hh = client_rect(h)
     ends = []
     for k in range(9):
@@ -111,13 +111,13 @@ def map_area(h):
                     break
             else:
                 run = 0
-    area = MAP_AREA
+    found = base
     if ends:
         best = max(ends, key=lambda e: sum(1 for o in ends if abs(o - e) < 0.012))  # the most common edge
         if sum(1 for o in ends if abs(o - best) < 0.012) >= 3 and 0.2 < best < 0.45:
-            area = (fx, fy, fw, round(best - 0.004 - fy, 4))
-    _map_cache[h] = (now, area)
-    return area
+            found = (fx, fy, fw, round(best - 0.004 - fy, 4))
+    _map_cache[h] = (now, found)
+    return found
 
 
 def grab_minimap(h):
