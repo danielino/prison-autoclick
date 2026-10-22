@@ -2,14 +2,17 @@
 opinion (which enemy has the least health, how many attacks are left). Everything it says is a hint: the colour detectors
 stay in charge, and any error, timeout or odd answer just means "no hint". Screenshots are sent only to the address the
 user typed in the settings, and only while the option is on."""
-import base64, json, re, struct, time, urllib.request, zlib
+import base64, json, re, struct, threading, time, urllib.request, zlib
 from .config import log
 from .vision import client_rect, grab
 
 DEFAULT_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3-vl:8b-instruct"
 MAX_FAILS = 3  # consecutive failures after which the helper is left alone until the next start
+FIGHT_TIMEOUT = 15  # seconds: a turn is short, a slow answer is worth nothing (the model is loaded beforehand)
+KEEP_ALIVE = "30m"  # how long Ollama keeps the model in memory after a request
 _fails = 0
+_state = "cold"  # cold -> warming -> ready (or failed): the first request makes Ollama load the model
 STATS = {"asks": 0, "ok": 0, "seconds": 0.0, "agree": 0, "differ": 0, "attacks_same": 0, "attacks_differ": 0}
 
 # 3x5 digits for the numbered markers drawn on the screenshot
@@ -23,13 +26,56 @@ FONT = {
 
 
 def active(cfg):
-    """True if the helper is switched on and has not given up."""
-    return bool(cfg.get("llm_enabled")) and _fails < MAX_FAILS
+    """True if the helper is switched on, has not given up and the model is loaded. If it is not loaded yet, loading
+    starts in the background and the fight goes on without the helper meanwhile."""
+    if not cfg.get("llm_enabled") or _fails >= MAX_FAILS:
+        return False
+    if _state == "cold":
+        start_warm_up(cfg)
+    return _state == "ready"
 
 
 def reset():
-    global _fails
-    _fails = 0
+    global _fails, _state
+    _fails, _state = 0, "cold"
+
+
+def mark_ready():
+    global _state
+    _state = "ready"
+
+
+def warm_up(cfg):
+    """Make Ollama load the model now (an empty request, like `ollama run` does), so that the first question in a fight
+    is answered at full speed. Loading a model of several GB can take half a minute. (True, text) or (False, text)."""
+    global _state
+    _state = "warming"
+    name = cfg.get("ollama_model") or DEFAULT_MODEL
+    t0 = time.time()
+    log("LLM warm-up: asking Ollama to load %s (this can take a while the first time)" % name)
+    try:
+        req = urllib.request.Request(_url(cfg, "/api/generate"), json.dumps({"model": name, "prompt": "", "stream": False,
+                                     "keep_alive": KEEP_ALIVE}).encode("utf8"), {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            r.read()
+        _state = "ready"
+        text = "Model %s loaded in %.1f s." % (name, time.time() - t0)
+        log("LLM warm-up: " + text)
+        return True, text
+    except Exception as e:
+        _state = "failed"
+        text = "Could not load %s: %s" % (name, e)
+        log("LLM warm-up failed after %.1f s: %s" % (time.time() - t0, e))
+        return False, text
+
+
+def start_warm_up(cfg):
+    """warm_up in a thread (once); the fight does not wait for it."""
+    global _state
+    if _state in ("warming", "ready"):
+        return
+    _state = "warming"
+    threading.Thread(target=warm_up, args=(dict(cfg),), daemon=True).start()
 
 
 # ---------------------------------------------------------------- images
@@ -100,7 +146,7 @@ def _url(cfg, path):
 def ask(cfg, prompt, png, kind="question"):
     """One question about one image -> the JSON object the model answered (dict), or None. Never raises."""
     global _fails
-    body = {"model": cfg.get("ollama_model") or DEFAULT_MODEL, "stream": False, "format": "json",
+    body = {"model": cfg.get("ollama_model") or DEFAULT_MODEL, "stream": False, "format": "json", "keep_alive": KEEP_ALIVE,
             "options": {"temperature": 0},
             "messages": [{"role": "user", "content": prompt, "images": [base64.b64encode(png).decode("ascii")]}]}
     STATS["asks"] += 1
@@ -109,7 +155,7 @@ def ask(cfg, prompt, png, kind="question"):
     try:
         req = urllib.request.Request(_url(cfg, "/api/chat"), json.dumps(body).encode("utf8"),
                                      {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=float(cfg.get("llm_timeout", 20))) as r:
+        with urllib.request.urlopen(req, timeout=min(float(cfg.get("llm_timeout", 12)), FIGHT_TIMEOUT)) as r:
             text = json.loads(r.read().decode("utf8"))["message"]["content"]
         m = re.search(r"\{.*\}", text, re.S)
         answer = json.loads(m.group(0)) if m else None
@@ -218,7 +264,10 @@ def pull_model(cfg, on_progress):
 
 def test_on_screen(cfg, h):
     """Send the top left corner of the game (the HUD) and report what the model reads, and how long it took."""
-    import time
+    if _state != "ready":
+        ok, text = warm_up(cfg)  # the first request loads the model: report that time apart from the answer
+        if not ok:
+            return False, text
     t0 = time.time()
     answer = ask(cfg, ATTACKS_PROMPT, screen_png(h, cfg, area=(0.0, 0.0, 0.30, 0.16)), "screen test")
     if answer is None:

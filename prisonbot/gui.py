@@ -203,7 +203,10 @@ class Gui:
             self.cfg["ollama_url"] = self.llmurl.get().strip() or llm.DEFAULT_URL
             self.cfg["ollama_model"] = self.llmmodel.get().strip() or llm.DEFAULT_MODEL
             self.cfg["llm_mode"] = self.llmmode.get() if self.llmmode.get() in ("assist", "decide") else "assist"
-            llm.reset()  # a changed address or model gets a fresh start
+            sig = (self.cfg["ollama_url"], self.cfg["ollama_model"])
+            if sig != getattr(self, "_llm_sig", sig):
+                llm.reset()  # a changed address or model: the new one has to be loaded
+            self._llm_sig = sig
             self.llm_switch()
         except ValueError:
             return  # half-typed value: ignore until it is a number

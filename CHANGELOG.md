@@ -12,6 +12,7 @@
   Ctrl+R repeats it. Without a readable number it falls back to the health rule (below 50%).
 
 ### Fixed
+- **Vision helper timing out**: the first request made Ollama load the model (20+ s) in the middle of a turn, and the connection test never loaded it. The model is now loaded when a hunt starts (and kept in memory for 30 minutes); a fight goes on without the helper until it is ready, and a request waits at most 15 s. `Test on the game screen` reports the loading time apart.
 - **Smaller or larger windows**: the ATAQUES digit reader accepts the drift of the glyph at other sizes (closest digit, clearly closer than the others), name labels and bar checks scale their pixel limits with the window size.
 - **Hurt bots not found in a fight**: the health bar of a damaged bot is mostly dark red, which was not recognised, so
   no bot was found and nothing was attacked. Both reds of the bar count now. Bars are also looked for at the very top of the room (a bot standing there has its name and bar at the screen edge).

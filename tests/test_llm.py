@@ -28,6 +28,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/api/generate":
+            Fake.requests.append(body)
+            self.reply({"done": True})
+            return
         if self.path == "/api/pull":
             self.send_response(200)
             self.end_headers()
@@ -45,6 +49,7 @@ def server(monkeypatch):
     srv = HTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     llm.reset()
+    llm.mark_ready()  # the model is loaded (see the warm-up tests below)
     monkeypatch.setattr(llm, "client_rect", lambda h: (0, 0, 400, 300))
     monkeypatch.setattr(llm, "grab", lambda x, y, w, h: bytes((40, 80, 120, 255)) * (w * h))
     yield {"llm_enabled": True, "ollama_url": "http://127.0.0.1:%d" % srv.server_address[1], "ollama_model": "m:1b",
@@ -117,6 +122,14 @@ def advice(monkeypatch, idx):
 
 
 CFG = {"llm_enabled": True, "llm_mode": "assist"}
+
+
+@pytest.fixture(autouse=True)
+def loaded_model():
+    llm.reset()
+    llm.mark_ready()
+    yield
+    llm.reset()
 
 
 def test_assist_follows_the_model_when_the_bars_cannot_tell(monkeypatch):
@@ -198,3 +211,32 @@ def test_fight_pick_counts_agreement_and_attack_comparison(monkeypatch):
     monkeypatch.setattr(hunt, "read_attacks", lambda h: 2)
     Bot(CFG).llm_pick(1, [(0.3, 0.3), (0.6, 0.3)], {})
     assert llm.STATS["differ"] == 1 and llm.STATS["attacks_same"] == 1
+
+
+def test_a_cold_model_starts_loading_and_the_fight_goes_on_without_it(monkeypatch):
+    llm.reset()
+    started = []
+    monkeypatch.setattr(llm, "start_warm_up", lambda cfg: started.append(1))
+    assert llm.active({"llm_enabled": True}) is False
+    assert started == [1]
+
+
+def test_warm_up_loads_the_model_and_marks_it_ready(server):
+    llm.reset()
+    ok, text = llm.warm_up(server)
+    assert ok and "loaded" in text and llm.active(server)
+    assert Fake.requests[-1]["model"] == "m:1b" and Fake.requests[-1]["keep_alive"] == "30m"
+
+
+def test_a_failed_warm_up_leaves_the_helper_off(server):
+    llm.reset()
+    server["ollama_url"] = "http://127.0.0.1:9"
+    ok, text = llm.warm_up(server)
+    assert not ok and not llm.active(server)
+
+
+def test_requests_keep_the_model_loaded_and_wait_at_most_the_fight_timeout(server):
+    server["llm_timeout"] = 300
+    llm.fight_advice(server, 1, [(0.2, 0.5), (0.7, 0.5)])
+    assert Fake.requests[0]["keep_alive"] == "30m"
+    assert llm.FIGHT_TIMEOUT <= 15

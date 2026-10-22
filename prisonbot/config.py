@@ -18,7 +18,7 @@ VK = {"TAB": 0x09, "F8": 0x77, "F9": 0x78, "F10": 0x79, "F12": 0x7B, "CAPSLOCK":
 
 DEFAULTS = {"hotkey": "TAB", "speed": 1.0, "click_interval": 0.10, "repeat_command": "/repetir",
             "repeat_interval": 5.0, "loot_command": "/loot", "hunt_area": None, "hunt_gap": 0.07, "hunt_map_gap": 0.10, "hunt_walk": False, "hunt_home": True, "hunt_patrol": True, "hunt_min_health": 0.70, "hunt_destroy_unique": True, "hunt_tour": 5, "hunt_forbidden": [], "heal_item": None, "seq_pause": 0.5, "jitter": 0.2, "background": False, "bg_settle": 0.15, "sequences": {},
-            "llm_enabled": False, "llm_mode": "assist", "ollama_url": "http://localhost:11434", "ollama_model": "qwen3-vl:8b-instruct", "llm_timeout": 20, "llm_max_width": 1024,
+            "llm_enabled": False, "llm_mode": "assist", "ollama_url": "http://localhost:11434", "ollama_model": "qwen3-vl:8b-instruct", "llm_timeout": 12, "llm_max_width": 1024,
             "names": {}, "library": {}}
 
 
