@@ -57,17 +57,17 @@ def test_manual_attack_picks_the_bot_nearest_to_the_spot(monkeypatch):
     assert b.moves == [(0.7, 0.3)]
 
 
-def test_manual_attack_tries_the_next_candidate_when_the_click_did_nothing(monkeypatch):
-    clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: n >= 2)
+def test_manual_attack_tries_the_next_candidate_after_shifting_the_first(monkeypatch):
+    clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: n >= 5)
     b = Bot()
     assert b.hunt_manual_attack(1, (0.5, 0.3))
-    assert b.moves == [(0.5, 0.3), (0.2, 0.7)] and len(clicks) == 2
+    assert b.moves[0] == (0.5, 0.3) and b.moves[-1] == (0.2, 0.7) and len(clicks) == 5
 
 
 def test_manual_attack_fails_when_no_click_has_an_effect(monkeypatch):
     clicks = patch(monkeypatch, [(0.2, 0.7)], [(0.5, 0.3)], works=lambda n: False)
     assert not Bot().hunt_manual_attack(1, None)
-    assert len(clicks) == 6  # 2 candidates + 4 shifted clicks around the nearest
+    assert len(clicks) == 5  # four clicks around the chosen bot, then the other one
 
 
 def test_label_and_bar_of_the_same_bot_are_one_candidate(monkeypatch):
@@ -150,3 +150,15 @@ def test_the_weakest_bot_stays_the_target_until_it_dies_then_the_next_weakest(mo
     monkeypatch.setattr(hunt, "LAST_BARS", [((0.34, 0.14), 0.97), ((0.53, 0.11), 0.9)])
     b.hunt_manual_attack(1, None)
     assert b.moves[-1] == (0.53, 0.11)
+
+
+def test_a_missed_click_is_shifted_on_the_same_bot_before_trying_another(monkeypatch):
+    # the body point under the bar of the weak bot does not register (the feet do): never fall to the full bot on the right
+    patch(monkeypatch, [], [(0.47, 0.25), (0.53, 0.08)], works=lambda n: n == 4)
+    monkeypatch.setattr(hunt, "LAST_BARS", [((0.47, 0.25), 0.36), ((0.53, 0.08), 1.0)])
+    b = Bot()
+    assert b.hunt_manual_attack(1, None)
+    assert all(abs(p[0] - 0.47) < 0.05 for p in b.moves) and len(b.moves) == 4
+    assert b.manual_pref == 3  # (0, +0.045): the feet; the next attack starts there
+    b.hunt_manual_attack(1, None)
+    assert b.moves[4] == (0.47, 0.25 + 0.045)

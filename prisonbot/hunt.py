@@ -98,6 +98,7 @@ class HuntMixin:
     # on the bot (its name label is not always above its body): each retry tries another point around the first one
     AIM_VARIANTS = [(0.0, 0.0), (0.025, 0.02), (-0.025, 0.02), (0.0, 0.045), (0.03, -0.015), (-0.03, -0.015)]
     aim_pref = 0  # the variant that worked last time: tried first from then on
+    manual_pref = 0  # the same for the manual attacks of a fight
 
     def hunt_attack(self, h, spot, variant=0):
         """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected."""
@@ -222,11 +223,13 @@ class HuntMixin:
             log("HUNT manual attack: no bot found on the screen")
             return False
         log("HUNT manual attack candidates: %s" % ", ".join("(%.3f,%.3f)" % p for p in cands[:4]))
-        tries = cands[:4]
-        if len(tries) < 4:  # few bots: the click may be off the body (diamond rooms: the feet), so shift the nearest one
-            tries += [(min(max(cands[0][0] + dx, 0.0), 1.0), min(max(cands[0][1] + dy, 0.0), 1.0))
-                      for dx, dy in self.AIM_VARIANTS[1:7 - len(tries)]]
-        for p in tries:
+        # the chosen bot first, with the click point that worked last time: the body point under the bar is often not what
+        # the game accepts (diamond rooms: the feet are), and a failed click must not send the attack to another bot
+        n, c0 = len(self.AIM_VARIANTS), cands[0]
+        order = [(self.manual_pref + k) % n for k in range(n if len(cands) < 2 else 4)]
+        tries = [((min(max(c0[0] + self.AIM_VARIANTS[v][0], 0.0), 1.0), min(max(c0[1] + self.AIM_VARIANTS[v][1], 0.0), 1.0)), v)
+                 for v in order] + [(c, None) for c in cands[1:3]]
+        for p, v in tries:
             base = grab_chat(h)
             self.hunt_move(h, *p)
             time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
@@ -236,10 +239,11 @@ class HuntMixin:
                 if changed(base, grab_chat(h), min_frac=0.01, tol=40):
                     log("HUNT manual attack at (%.3f,%.3f): done" % p)
                     self.fight_spot = p
+                    if v is not None:
+                        self.manual_pref = v
                     return True
-            log("HUNT manual attack at (%.3f,%.3f): nothing happened, trying the next candidate" % p)
+            log("HUNT manual attack at (%.3f,%.3f): nothing happened, trying the next click" % p)
         return False
-
     def hunt_fight(self, h, spot=None):
         """Attack by hand for the first turns (Ctrl+R has nothing to repeat yet), then Ctrl+R on every turn of yours until
         the fight is over (banner gone for 2 s). If Ctrl+R does not pass the turn (e.g. the bot it repeated is dead and a

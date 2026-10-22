@@ -21,6 +21,7 @@
 - **Two bots in a fight**: both attacks of a turn go to the bot hit first until it dies; before, if its bar was hidden, the other bot's bar won and the attacks were split.
 - **Third attack cut short**: the ATAQUES reader mistakes the digits 2, 1 and 0 (a 2 read as 1, a 1 as 0), so the turn ended after two attacks. Only a 3 at the start of a turn is believed now; after that the attacks are counted by the bot itself.
 - **Target choice with several bots**: the health left of every bar is measured (bright part over the whole bar) and a new target is the bot with the least health, hit until it dies; then the next weakest. Before, it was the one nearest to the opening click.
+- **Attacks drifting to another bot**: when the click on the chosen bot registered nothing, the attack went to the other bot (and stayed there). Now the chosen bot gets up to 4 clicks around it first (the click point that worked last is tried first, e.g. the feet), and only then another bot.
 - **Stuck in a fight**: when the only candidate of a manual attack does nothing, the click is shifted around it (the same
   points as the opening aim) instead of repeating the same click; after 3 rounds without a working click it sends
   Ctrl+R, after 6 Ctrl+T, so the fight moves on.
