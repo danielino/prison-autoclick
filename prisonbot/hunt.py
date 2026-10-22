@@ -209,6 +209,15 @@ class HuntMixin:
             # both attacks of a turn go to the same bot until it dies: whatever was seen near the last hit (bar or
             # label) comes first, even if its bar is hidden and only the label shows
             cands.sort(key=lambda p: (p[0] - locked[0]) ** 2 + (p[1] - locked[1]) ** 2)
+            # ...but the health is measured at every attack: a bot clearly weaker than the one being hit (by more than
+            # 5 points) takes over (the one being hit keeps it while its bar is hidden or the difference is small)
+            if cands and cands[0] in fills:
+                weaker = [p for p in cands if p in fills and fills[p] < fills[cands[0]] - 0.05]
+                if weaker:
+                    w = min(weaker, key=lambda p: fills[p])
+                    log("HUNT a weaker bot at (%.3f,%.3f): %.0f%% against %.0f%%" % (w[0], w[1], fills[w] * 100, fills[cands[0]] * 100))
+                    cands.remove(w)
+                    cands.insert(0, w)
         else:
             # a new target: the bar with the least health first (bars within 10% of each other count as equal, then
             # the one nearest to the spot of the attack); labels have no health to compare and come after the bars
@@ -306,6 +315,9 @@ class HuntMixin:
                         # (20 s at most, in case the line cannot be read)
                         if chat_turn_is_mine(h) or now - await_turn >= 20.0:
                             await_turn = None
+                            # a new turn: the camera may have moved, so the spot of the last hit means nothing; the area
+                            # is scanned again and the weakest bot chosen from scratch
+                            self.fight_spot = None
                         else:
                             self.hunt_say("waiting for the enemy to finish its turn")
                             last = now - max(self.cfg["repeat_interval"], 5.0) + 1.0

@@ -162,3 +162,20 @@ def test_a_missed_click_is_shifted_on_the_same_bot_before_trying_another(monkeyp
     assert b.manual_pref == 3  # (0, +0.045): the feet; the next attack starts there
     b.hunt_manual_attack(1, None)
     assert b.moves[4] == (0.47, 0.25 + 0.045)
+
+def test_the_health_is_compared_at_every_attack_and_a_clearly_weaker_bot_takes_over(monkeypatch):
+    patch(monkeypatch, [], [(0.47, 0.25), (0.53, 0.08)])
+    monkeypatch.setattr(hunt, "LAST_BARS", [((0.47, 0.25), 0.9), ((0.53, 0.08), 0.3)])
+    b = Bot()
+    b.fight_spot = (0.47, 0.25)  # the one being hit is still healthier
+    b.hunt_manual_attack(1, None)
+    assert b.moves[0][0] > 0.5
+
+
+def test_a_small_difference_does_not_change_the_target(monkeypatch):
+    patch(monkeypatch, [], [(0.47, 0.25), (0.53, 0.08)])
+    monkeypatch.setattr(hunt, "LAST_BARS", [((0.47, 0.25), 0.60), ((0.53, 0.08), 0.57)])
+    b = Bot()
+    b.fight_spot = (0.47, 0.25)
+    b.hunt_manual_attack(1, None)
+    assert b.moves[0][0] < 0.5
