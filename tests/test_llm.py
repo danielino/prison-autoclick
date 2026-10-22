@@ -28,6 +28,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/api/pull":
+            self.send_response(200)
+            self.end_headers()
+            for msg in ({"status": "pulling manifest"}, {"status": "pulling", "completed": 50, "total": 100},
+                        {"status": "success"} if body["model"] != "nope" else {"error": "pull model manifest: file does not exist"}):
+                self.wfile.write(json.dumps(msg).encode() + b"\n")
+            return
         Fake.requests.append(body)
         self.reply({"message": {"role": "assistant", "content": Fake.answer}})
 
@@ -141,3 +148,27 @@ def test_a_bot_being_hit_is_not_changed_in_assist_mode(monkeypatch):
 def test_no_helper_no_change(monkeypatch):
     advice(monkeypatch, 1)
     assert Bot({}).llm_pick(1, [(0.3, 0.3), (0.6, 0.3)], {})[0] == (0.3, 0.3)
+
+
+def test_installed_models_are_listed(server):
+    assert llm.list_models(server) == (True, ["m:1b"])
+    server["ollama_url"] = "http://127.0.0.1:9"
+    assert llm.list_models(server)[0] is False
+
+
+def test_pull_reports_progress(server):
+    seen = []
+    ok, text = llm.pull_model(server, lambda status, frac: seen.append((status, frac)))
+    assert ok and ("pulling", 0.5) in seen and "ready" in text
+
+
+def test_pull_reports_a_server_error(server):
+    server["ollama_model"] = "nope"
+    ok, text = llm.pull_model(server, lambda s, f: None)
+    assert not ok and "does not exist" in text
+
+
+def test_screen_test_reports_the_answer_and_the_time(server):
+    Fake.answer = '{"attacks_left": 2}'
+    ok, text = llm.test_on_screen(server, 1)
+    assert ok and "attacks left = 2" in text

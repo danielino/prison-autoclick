@@ -23,9 +23,10 @@ class Gui:
 
         nb = self.nb = ttk.Notebook(w)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
-        tab_click, tab_hunt, tab_seq = (ttk.Frame(nb) for _ in range(3))
+        tab_click, tab_hunt, tab_vision, tab_seq = (ttk.Frame(nb) for _ in range(4))
         nb.add(tab_click, text="  Autoclick  ")
         nb.add(tab_hunt, text="  Auto-hunt  ")
+        nb.add(tab_vision, text="  Vision  ")
         nb.add(tab_seq, text="  Sequences  ")
 
         # ---- tab 1: autoclick -------------------------------------------------------------------------------
@@ -82,6 +83,8 @@ class Gui:
         self.llmurl = tk.StringVar(value=self.cfg.get("ollama_url", llm.DEFAULT_URL))
         self.llmmodel = tk.StringVar(value=self.cfg.get("ollama_model", llm.DEFAULT_MODEL))
         self.llmmode = tk.StringVar(value=self.cfg.get("llm_mode", "assist"))
+        self.llmtimeout = tk.StringVar(value="%g" % self.cfg.get("llm_timeout", 20))
+        self.llmwidth = tk.StringVar(value=str(int(self.cfg.get("llm_max_width", 1024))))
 
         pick = ttk.LabelFrame(tab_hunt, text="Choosing bots")
         pick.pack(fill="x", padx=10, pady=4)
@@ -119,29 +122,7 @@ class Gui:
         ttk.Checkbutton(care, variable=self.destroyvar, command=self.apply, text=(
             "Destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up")).grid(
             row=3, column=0, columnspan=3, padx=8, pady=(6, 8), sticky="w")
-        vis = ttk.LabelFrame(tab_hunt, text="Vision helper (Ollama, optional)")
-        vis.pack(fill="x", padx=10, pady=4)
-        ttk.Checkbutton(vis, variable=self.llmvar, command=self.apply, text=(
-            "Ask an Ollama vision model for a second opinion in fights (which bot is weakest, attacks left). "
-            "Screenshots of the game are sent to the address below.")).grid(
-            row=0, column=0, columnspan=4, padx=8, pady=(6, 2), sticky="w")
-        ttk.Label(vis, text="Server").grid(row=1, column=0, padx=8, sticky="w")
-        eu = ttk.Entry(vis, textvariable=self.llmurl, width=30)
-        eu.grid(row=1, column=1, padx=4, sticky="w")
-        ttk.Label(vis, text="Model").grid(row=1, column=2, padx=(12, 4), sticky="w")
-        em = ttk.Entry(vis, textvariable=self.llmmodel, width=18)
-        em.grid(row=1, column=3, padx=4, sticky="w")
-        for e in (eu, em):
-            e.bind("<KeyRelease>", lambda ev: self.apply())
-        ttk.Label(vis, text="Mode").grid(row=2, column=0, padx=8, pady=(4, 0), sticky="w")
-        cm = ttk.Combobox(vis, textvariable=self.llmmode, values=("assist", "decide"), width=8, state="readonly")
-        cm.grid(row=2, column=1, padx=4, pady=(4, 0), sticky="w")
-        cm.bind("<<ComboboxSelected>>", lambda ev: self.apply())
-        ttk.Button(vis, text="Test connection", command=self.llm_test).grid(row=2, column=2, padx=(12, 4), pady=(4, 0), sticky="w")
-        self.llminfo = ttk.Label(vis, foreground="gray", wraplength=640, justify="left", text=(
-            "assist: the colour detectors choose, the model only breaks ties or helps when the bars cannot be measured. "
-            "decide: the model's choice wins."))
-        self.llminfo.grid(row=3, column=0, columnspan=4, padx=8, pady=(4, 8), sticky="w")
+        self.build_vision(tab_vision)
         self.hunt_last = "unset"
         self.hunt_sync()
 
@@ -210,19 +191,157 @@ class Gui:
             self.cfg["hunt_walk"] = bool(self.walkvar.get())
             self.cfg["hunt_home"] = bool(self.homevar.get())
             self.cfg["hunt_patrol"] = bool(self.patrolvar.get())
+            self.cfg["llm_timeout"] = min(max(float(self.llmtimeout.get().replace(",", ".")), 2), 300)
+            self.cfg["llm_max_width"] = int(min(max(float(self.llmwidth.get()), 256), 2048))
             self.cfg["llm_enabled"] = bool(self.llmvar.get())
             self.cfg["ollama_url"] = self.llmurl.get().strip() or llm.DEFAULT_URL
             self.cfg["ollama_model"] = self.llmmodel.get().strip() or llm.DEFAULT_MODEL
             self.cfg["llm_mode"] = self.llmmode.get() if self.llmmode.get() in ("assist", "decide") else "assist"
             llm.reset()  # a changed address or model gets a fresh start
+            self.llm_switch()
         except ValueError:
             return  # half-typed value: ignore until it is a number
         save(self.cfg)
 
-    def llm_test(self):
+    # -- vision helper (Ollama)
+    def build_vision(self, tab):
+        box = ttk.LabelFrame(tab, text="Ollama server")
+        box.pack(fill="x", padx=10, pady=(10, 4))
+        ttk.Checkbutton(box, variable=self.llmvar, command=self.apply, text=(
+            "Use a vision model in fights: a second opinion on which bot is weakest and how many attacks are left.\n"
+            "Screenshots of the game are sent to the server below. Uncheck it to turn the whole feature off.")).grid(
+            row=0, column=0, columnspan=4, padx=8, pady=(6, 6), sticky="w")
+        ttk.Label(box, text="Server address").grid(row=1, column=0, padx=8, sticky="w")
+        eu = ttk.Entry(box, textvariable=self.llmurl, width=34)
+        eu.grid(row=1, column=1, columnspan=2, padx=4, sticky="w")
+        eu.bind("<KeyRelease>", lambda ev: self.apply())
+        b_test = ttk.Button(box, text="Test connection", command=self.llm_test)
+        b_test.grid(row=1, column=3, padx=8, sticky="w")
+        ttk.Label(box, text="Model").grid(row=2, column=0, padx=8, pady=(6, 0), sticky="w")
+        self.llmbox = ttk.Combobox(box, textvariable=self.llmmodel, width=32, values=())
+        self.llmbox.grid(row=2, column=1, columnspan=2, padx=4, pady=(6, 0), sticky="w")
+        self.llmbox.bind("<<ComboboxSelected>>", lambda ev: self.apply())
+        self.llmbox.bind("<KeyRelease>", lambda ev: self.apply())
+        row = ttk.Frame(box)
+        row.grid(row=2, column=3, padx=8, pady=(6, 0), sticky="w")
+        b_list = ttk.Button(row, text="Installed models", command=self.llm_refresh)
+        b_list.pack(side="left")
+        b_pull = ttk.Button(row, text="Download", command=self.llm_pull)
+        b_pull.pack(side="left", padx=(6, 0))
+        ttk.Label(box, text="Mode").grid(row=3, column=0, padx=8, pady=(6, 0), sticky="w")
+        cm = ttk.Combobox(box, textvariable=self.llmmode, values=("assist", "decide"), width=10, state="readonly")
+        cm.grid(row=3, column=1, padx=4, pady=(6, 0), sticky="w")
+        cm.bind("<<ComboboxSelected>>", lambda ev: self.apply())
+        ttk.Label(box, text="Wait for an answer (s)").grid(row=4, column=0, padx=8, pady=(6, 0), sticky="w")
+        s_time = self.spin(box, self.llmtimeout, 2, 300, 1, 8, self.apply)
+        s_time.grid(row=4, column=1, padx=4, pady=(6, 0), sticky="w")
+        ttk.Label(box, text="Image width (px)").grid(row=4, column=2, padx=(12, 4), pady=(6, 0), sticky="e")
+        s_width = self.spin(box, self.llmwidth, 256, 2048, 128, 8, self.apply)
+        s_width.grid(row=4, column=3, padx=8, pady=(6, 0), sticky="w")
+        b_screen = ttk.Button(box, text="Test on the game screen", command=self.llm_screen)
+        b_screen.grid(row=5, column=0, columnspan=2, padx=8, pady=(10, 4), sticky="w")
+        self.llmbar = ttk.Progressbar(box, length=300, maximum=100)
+        self.llmbar.grid(row=5, column=2, columnspan=2, padx=8, pady=(10, 4), sticky="w")
+        self.llminfo = ttk.Label(box, foreground="gray", wraplength=680, justify="left", text="")
+        self.llminfo.grid(row=6, column=0, columnspan=4, padx=8, pady=(2, 8), sticky="w")
+        ttk.Label(tab, foreground="gray", wraplength=720, justify="left", text=(
+            "assist: the colour detectors choose the bot; the model only breaks ties or helps when the health bars cannot "
+            "be measured.\ndecide: the model's choice wins.\nAny error or odd answer just means no hint, and after 3 "
+            "failures in a row the model is left alone until the program restarts.\nA vision model of 8B parameters "
+            "(for example qwen3-vl:8b-instruct) is enough; the Download button does `ollama pull` for the model above.")).pack(
+            fill="x", padx=12, pady=(2, 8))
+        self.llm_job = None
+        self.llm_names = ()
+        self.llm_fields = [(eu, "normal"), (self.llmbox, "normal"), (cm, "readonly"), (b_test, "normal"), (b_list, "normal"),
+                           (b_pull, "normal"), (s_time, "normal"), (s_width, "normal"), (b_screen, "normal")]
+        self.llm_switch()
+
+    def llm_switch(self):
+        """With the helper off, its settings are greyed out: nothing is sent anywhere and the program works as without it."""
+        on = bool(self.llmvar.get())
+        for w, state in self.llm_fields:
+            w.configure(state=state if on else "disabled")
+        if not on:
+            self.llminfo.config(foreground="gray", text="Off: no screenshot is sent anywhere and no model is needed. "
+                                "Leave it off on a PC that cannot run Ollama; the program works the same.")
+
+    def llm_run(self, work):
+        """Run work(report) in a thread; report(text, fraction=None, done=False, ok=True) is polled by the window."""
+        if self.llm_job and self.llm_job["alive"]:
+            return
         self.apply()
-        ok, text = llm.test_connection(self.cfg)
-        self.llminfo.config(text=text, foreground="#1a7f37" if ok else "#b3261e")
+        job = self.llm_job = {"alive": True, "msg": ("Working...", None, False, True)}
+
+        def report(text, frac=None, done=False, ok=True):
+            job["msg"] = (text, frac, done, ok)
+
+        def run():
+            try:
+                work(report)
+            except Exception as e:
+                report("Error: %s" % e, None, True, False)
+            job["alive"] = False
+        threading.Thread(target=run, daemon=True).start()
+        self.llm_poll()
+
+    def llm_poll(self):
+        job = self.llm_job
+        if not job:
+            return
+        text, frac, done, ok = job["msg"]
+        self.llminfo.config(text=text, foreground="gray" if not done else ("#1a7f37" if ok else "#b3261e"))
+        if frac is None:
+            self.llmbar.config(mode="indeterminate") if not done else self.llmbar.config(mode="determinate", value=0)
+            if not done:
+                self.llmbar.step(8)
+        else:
+            self.llmbar.config(mode="determinate", value=frac * 100)
+        if done:
+            self.llmbox.config(values=self.llm_names)
+        if job["alive"] or not done:
+            self.win.after(150, self.llm_poll)
+
+    def llm_test(self):
+        def work(report):
+            ok, text = llm.test_connection(self.cfg)
+            report(text, None, True, ok)
+            if ok:
+                self.llm_models_ready()
+        self.llm_run(work)
+
+    def llm_models_ready(self):
+        ok, names = llm.list_models(self.cfg)
+        if ok:
+            self.llm_names = names
+
+    def llm_refresh(self):
+        def work(report):
+            ok, names = llm.list_models(self.cfg)
+            if ok:
+                self.llm_names = names
+                report("%d models installed: %s" % (len(names), ", ".join(names) or "none"), None, True, True)
+            else:
+                report(names, None, True, False)
+        self.llm_run(work)
+
+    def llm_pull(self):
+        def work(report):
+            report("Downloading %s ..." % self.cfg["ollama_model"], None)
+            ok, text = llm.pull_model(self.cfg, lambda status, frac: report("%s: %s" % (self.cfg["ollama_model"], status), frac))
+            report(text, 1.0 if ok else None, True, ok)
+        self.llm_run(work)
+
+    def llm_screen(self):
+        def work(report):
+            h = find_game()
+            if not h:
+                report("The game window was not found: start the game first.", None, True, False)
+                return
+            report("Sending the game screen...", None)
+            ok, text = llm.test_on_screen(self.cfg, h)
+            report(text, None, True, ok)
+        self.llm_run(work)
+
     # -- auto-hunt area (the in-game setup, option 7, writes the same cfg value)
     def hunt_sync(self):
         cur = self.cfg.get("hunt_area")

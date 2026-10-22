@@ -14,9 +14,24 @@ def app():
     a.root.destroy()
 
 
-def test_window_has_three_tabs(app):
+def test_window_has_four_tabs(app):
     g = app.gui
-    assert [g.nb.tab(i, "text").strip() for i in range(3)] == ["Autoclick", "Auto-hunt", "Sequences"]
+    assert [g.nb.tab(i, "text").strip() for i in range(4)] == ["Autoclick", "Auto-hunt", "Vision", "Sequences"]
+
+
+def test_ollama_settings_are_applied_and_saved(app):
+    g = app.gui
+    g.llmvar.set(True)
+    g.llmurl.set("http://192.168.1.50:11434")
+    g.llmmodel.set("qwen3-vl:8b-instruct")
+    g.llmmode.set("decide")
+    g.llmtimeout.set("12")
+    g.llmwidth.set("896")
+    g.apply()
+    c = app.cfg
+    assert (c["llm_enabled"], c["ollama_url"], c["ollama_model"], c["llm_mode"]) == (
+        True, "http://192.168.1.50:11434", "qwen3-vl:8b-instruct", "decide")
+    assert c["llm_timeout"] == 12 and c["llm_max_width"] == 896
 
 
 def test_settings_are_applied_and_saved(app):
@@ -38,3 +53,14 @@ def test_half_typed_value_is_ignored(app):
     g.gap.set("")
     g.apply()
     assert app.cfg["hunt_gap"] == before
+
+
+def test_turning_the_helper_off_greys_out_its_settings(app):
+    g = app.gui
+    g.llmvar.set(True)
+    g.apply()
+    assert str(g.llm_fields[0][0].cget("state")) == "normal"
+    g.llmvar.set(False)
+    g.apply()
+    assert app.cfg["llm_enabled"] is False
+    assert all(str(w.cget("state")) == "disabled" for w, _ in g.llm_fields)

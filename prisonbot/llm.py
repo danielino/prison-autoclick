@@ -176,3 +176,45 @@ def read_attacks(cfg, h):
     left = _int((answer or {}).get("attacks_left"), 0, 5)
     log("LLM reads attacks left: %s" % left)
     return left
+
+
+# ---------------------------------------------------------------- settings window helpers
+def list_models(cfg):
+    """(True, [installed model names]) or (False, error text)."""
+    try:
+        with urllib.request.urlopen(_url(cfg, "/api/tags"), timeout=5) as r:
+            return True, sorted(m.get("name", "") for m in json.loads(r.read().decode("utf8")).get("models", []))
+    except Exception as e:
+        return False, "No answer from %s: %s" % (cfg.get("ollama_url") or DEFAULT_URL, e)
+
+
+def pull_model(cfg, on_progress):
+    """Download the configured model (like `ollama pull`). on_progress(text, fraction or None) is called as it goes.
+    (True, text) or (False, error text)."""
+    name = cfg.get("ollama_model") or DEFAULT_MODEL
+    try:
+        req = urllib.request.Request(_url(cfg, "/api/pull"), json.dumps({"model": name, "stream": True}).encode("utf8"),
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            for line in r:
+                if not line.strip():
+                    continue
+                msg = json.loads(line.decode("utf8"))
+                if msg.get("error"):
+                    return False, str(msg["error"])
+                done, total = msg.get("completed"), msg.get("total")
+                on_progress(msg.get("status", ""), (done / total) if done and total else None)
+        return True, "Model %s is ready." % name
+    except Exception as e:
+        return False, "Download failed: %s" % e
+
+
+def test_on_screen(cfg, h):
+    """Send the top left corner of the game (the HUD) and report what the model reads, and how long it took."""
+    import time
+    t0 = time.time()
+    answer = ask(cfg, ATTACKS_PROMPT, screen_png(h, cfg, area=(0.0, 0.0, 0.30, 0.16)))
+    if answer is None:
+        return False, "The model did not give a usable answer (see autoprison.log)."
+    return True, "Answered in %.1f s: attacks left = %s (the box is empty during the enemy's turn)." % (
+        time.time() - t0, answer.get("attacks_left"))
