@@ -33,8 +33,15 @@ def test_working_variant_is_tried_first_next_time(monkeypatch):
     assert b.tried == [2]
 
 
-def test_engage_gives_up_after_four_steps(monkeypatch):
+def test_engage_gives_up_after_eight_clicks(monkeypatch):
     monkeypatch.setattr(hunt, "find_bots", lambda h: [])
     b = Bot(works_on=99)
     assert not b.hunt_engage(1, (0.5, 0.5))
-    assert len(b.tried) == 4
+    assert len(b.tried) == hunt.HuntMixin.ENGAGE_TRIES == 8
+
+
+def test_a_bot_that_needs_the_ninth_variant_is_not_reached_but_the_fifth_is(monkeypatch):
+    monkeypatch.setattr(hunt, "find_bots", lambda h: [])
+    b = Bot(works_on=4)
+    assert b.hunt_engage(1, (0.5, 0.5))
+    assert len(b.tried) == 5  # it used to give up after 4

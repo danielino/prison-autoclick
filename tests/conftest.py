@@ -35,3 +35,11 @@ def reset_hud_position():
     yield
     vision.HUD["bar_y"] = vision.NOMINAL_BAR_Y
     vision.AREAS.clear()
+
+
+
+@pytest.fixture(autouse=True)
+def no_settings_written_by_the_hunt(monkeypatch):
+    """The hunt saves what it learns (door spots, label texts): never into a real file during the tests."""
+    from prisonbot import hunt
+    monkeypatch.setattr(hunt, "save", lambda cfg: None)

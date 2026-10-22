@@ -107,7 +107,7 @@ def test_after_a_quick_miss_it_clicks_again_without_walking_first(monkeypatch):
     monkeypatch.setattr(hunt, "find_self", lambda h: (0.4, 0.8))
     e = Engager(quick=True)
     assert not e.hunt_engage(1, (0.5, 0.5))
-    assert len(e.tried) == 4 and e.approached == 1  # steps 0 and 1 skip the walk; step 2 walks; step 3 is the last try
+    assert len(e.tried) == 8 and e.approached == 2  # four clicks at once, then it walks closer (twice at most)
 
 
 def test_a_refused_click_still_walks_closer_first(monkeypatch):
@@ -115,4 +115,4 @@ def test_a_refused_click_still_walks_closer_first(monkeypatch):
     monkeypatch.setattr(hunt, "find_self", lambda h: (0.4, 0.8))
     e = Engager(quick=False)
     e.hunt_engage(1, (0.5, 0.5))
-    assert e.approached == 3
+    assert e.approached == 2  # the walk is for refused clicks, and at most twice

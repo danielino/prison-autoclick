@@ -225,3 +225,53 @@ def test_a_remembered_door_is_refused_in_that_zone_only(monkeypatch):
     b.zone0 = "map-B"
     hunt.HuntMixin.hover_memo.clear()
     assert b.hunt_hover_ok(1, (0.71, 0.3)) is True  # another zone: the spot means nothing
+
+
+# ---------------------------------------------------------------- labels that were read before
+def test_the_signature_of_a_label_does_not_depend_on_where_it_is():
+    a = [(x, y) for x in range(0, 120, 2) for y in range(0, 12, 2) if (x // 6 + y) % 3]
+    b = [(x + 300, y + 77) for x, y in a]
+    assert hunt.signature_overlap(hunt.label_signature(a), hunt.label_signature(b)) == 1.0
+    other = [(x, y) for x in range(0, 200, 2) for y in range(0, 12, 2) if (x // 10 + y) % 2]
+    assert hunt.signature_overlap(hunt.label_signature(a), hunt.label_signature(other)) < 0.8
+
+
+def test_a_label_read_once_is_not_asked_again(monkeypatch):
+    b = Bot(DOOR)
+    b.cfg = {"llm_enabled": True}
+    screen(monkeypatch, b)
+    asked = []
+    monkeypatch.setattr(hunt.llm, "active", lambda cfg: True)
+    monkeypatch.setattr(hunt.llm, "read_hover", lambda cfg, h, p: asked.append(p) or ("CELDAS", True))
+    assert b.hunt_hover_ok(1, (0.7, 0.3)) is False
+    hunt.HuntMixin.hover_memo.clear()
+    assert b.hunt_hover_ok(1, (0.68, 0.31)) is False  # the same label a little elsewhere: known, refused at once
+    assert len(asked) == 1 and len(b.cfg["label_cache"]) == 1
+
+
+def test_a_known_bot_label_goes_through_at_once(monkeypatch):
+    b = Bot(DOOR)
+    b.cfg = {"llm_enabled": True}
+    screen(monkeypatch, b)
+    monkeypatch.setattr(hunt.llm, "active", lambda cfg: True)
+    monkeypatch.setattr(hunt.llm, "read_hover", lambda cfg, h, p: ("PELEARSE CON UN WILD DOG PARIA", False))
+    assert b.hunt_hover_ok(1, (0.7, 0.3)) is True
+    hunt.HuntMixin.hover_memo.clear()
+    monkeypatch.setattr(hunt.llm, "read_hover", lambda cfg, h, p: pytest.fail("asked again"))
+    assert b.hunt_hover_ok(1, (0.69, 0.3)) is True
+
+
+def test_without_the_model_a_label_on_a_found_bot_is_let_through(monkeypatch):
+    b = Bot(DOOR)
+    b.cfg = {}
+    screen(monkeypatch, b)
+    monkeypatch.setattr(hunt, "find_bots", lambda h: [(0.7, 0.33)])  # a bot is right there
+    assert b.hunt_hover_ok(1, (0.7, 0.3), "attack") is True
+
+
+def test_without_the_model_a_label_away_from_any_bot_is_refused(monkeypatch):
+    b = Bot(DOOR)
+    b.cfg = {}
+    screen(monkeypatch, b)
+    monkeypatch.setattr(hunt, "find_bots", lambda h: [(0.3, 0.7)])
+    assert b.hunt_hover_ok(1, (0.7, 0.3), "attack") is False

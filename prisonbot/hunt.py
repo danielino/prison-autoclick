@@ -8,6 +8,30 @@ from .minimap import *
 from . import llm, diagnostic, stats, live, layout
 
 
+def label_signature(points, cols=48, rows=8):
+    """A compact signature (hex) of a text label: which cells of a cols x rows grid laid over its bounding box hold text.
+    The same text gives the same signature wherever it appears on screen."""
+    if not points:
+        return None
+    x0, x1 = min(p[0] for p in points), max(p[0] for p in points)
+    y0, y1 = min(p[1] for p in points), max(p[1] for p in points)
+    bits = 0
+    for x, y in points:
+        c = min(int((x - x0) * cols / (x1 - x0 + 1)), cols - 1)
+        r = min(int((y - y0) * rows / (y1 - y0 + 1)), rows - 1)
+        bits |= 1 << (r * cols + c)
+    return "%x" % bits
+
+
+def signature_overlap(a, b):
+    """How much two label signatures overlap, 0..1 (cells in both over cells in either)."""
+    if not a or not b:
+        return 0.0
+    x, y = int(a, 16), int(b, 16)
+    union = bin(x | y).count("1")
+    return bin(x & y).count("1") / float(union) if union else 0.0
+
+
 class HuntMixin:
     """Methods of App for option 7 (auto-hunt)."""
 
@@ -181,7 +205,7 @@ class HuntMixin:
         self.hunt_move(h, *p)
         time.sleep(self.HOVER_WAIT)
         after = grab(gx, gy, rw, rh)
-        new, lo, hi = 0, rw, 0
+        new, lo, hi, pts = 0, rw, 0, []
         for j in range(0, rh, 2):
             base = j * rw * 4
             for i in range(0, rw, 2):
@@ -189,8 +213,11 @@ class HuntMixin:
                 if min(after[q], after[q + 1], after[q + 2]) >= 225 and min(before[q], before[q + 1], before[q + 2]) < 200:
                     new += 1
                     lo, hi = min(lo, i), max(hi, i)
+                    pts.append((i, j))
         wide = (hi - lo) >= 0.05 * w
-        return (new * 4 >= 150 * k * k and wide), new * 4
+        found = new * 4 >= 150 * k * k and wide
+        self.last_label_sig = label_signature(pts) if found else None
+        return found, new * 4
 
     def hunt_hover_ok(self, h, p, what="click"):
         """True if it is safe to click at `p`: no door/exit label shows when the pointer rests there. With the vision model
@@ -209,7 +236,23 @@ class HuntMixin:
             return True
         log("HUNT hover check at (%.3f,%.3f): a label appeared (%d new text pixels) before the %s" % (p[0], p[1], n, what))
         cfg = getattr(self, "cfg", None) or {}
-        said = llm.read_hover(cfg, h, p) if llm.active(cfg) else None
+        sig = getattr(self, "last_label_sig", None)
+        cache = cfg.setdefault("label_cache", []) if isinstance(cfg, dict) else []
+        known = next((e for e in cache if signature_overlap(e.get("sig"), sig) >= 0.8), None)
+        said = None
+        if known is not None:  # the same text was read before (by the model, once): no waiting
+            said = (known.get("text", ""), bool(known.get("exit")))
+            log("HUNT the label is a known one: %r (%s)" % (said[0], "exit" if said[1] else "not an exit"))
+        elif llm.active(cfg):
+            said = llm.read_hover(cfg, h, p)
+            if said is not None and sig:
+                cache.append({"sig": sig, "text": said[0], "exit": bool(said[1])})
+                del cache[:-40]
+                save(cfg)  # remembered for the next runs too: the model is asked once per text
+        elif what != "walk" and any(abs(b[0] - p[0]) < 0.045 and abs(b[1] - p[1]) < 0.07 for b in find_bots(h)):
+            log("HUNT no vision model: the label is on a bot that was found there, going on")
+            HuntMixin.hover_memo[key] = (time.time() + 15.0, True)
+            return True
         if said is not None and said[1] is False and said[0]:
             log("HUNT the label reads %r: not an exit, going on" % said[0])
             HuntMixin.hover_memo[key] = (time.time() + 15.0, True)
@@ -343,23 +386,32 @@ class HuntMixin:
             last = cur or last
         return True
 
+    ENGAGE_TRIES = 8  # clicks on a bot before giving up on it (each one re-aims on where the bot is now)
+
     def hunt_engage(self, h, bot):
-        """Attack; if the bot is out of range, walk closer and try again (up to 4 times)."""
-        for step in range(4):
+        """Attack; a click that hits nothing is made again at once on the bot's new place (up to ENGAGE_TRIES clicks); if
+        the bot is out of range, walk closer first (at most twice)."""
+        approaches, quick = 0, 0
+        for step in range(self.ENGAGE_TRIES):
             variant = (self.aim_pref + step) % len(self.AIM_VARIANTS)
             if self.hunt_attack(h, bot, variant):
                 if variant != self.aim_pref:
                     log("HUNT aim variant %d worked: using it first from now on" % variant)
                 self.aim_pref = variant
                 return True
-            if not self.alive() or step == 3:
+            if not self.alive() or step == self.ENGAGE_TRIES - 1:
                 return False
-            if self.attack_quick_miss and step < 2 and find_self(h):
+            if self.attack_quick_miss and quick < 4 and find_self(h):
                 # the character did not even start walking: the click hit nothing (the bot moved). Look again and click
                 # again at once instead of walking first; walking closer is for the clicks the game refuses
+                quick += 1
                 self.hunt_say("click missed the bot: looking again")
-            elif not self.hunt_approach(h, bot):
-                return False
+            elif approaches >= 2:
+                self.hunt_say("looking for the bot again")
+            else:
+                approaches += 1
+                if not self.hunt_approach(h, bot):
+                    return False
             near = [p for p in find_bots(h) if abs(p[0] - bot[0]) < 0.25 and abs(p[1] - bot[1]) < 0.25]
             bot = min(near, key=lambda p: (p[0] - bot[0]) ** 2 + (p[1] - bot[1]) ** 2) if near else bot
         return False
@@ -1076,6 +1128,7 @@ class HuntMixin:
         diagnostic.log_window(h)  # the window size goes to the log (and a warning if it is not 16:9)
         self.hunt_layout(h, "start")
         self._layout_fight = False
+        self.fail_spots = {}  # screen spot -> how many times an attack there started no fight
         if self.cfg.get("llm_enabled") and self.cfg.get("llm_layout", True):
             # the vision model looks at the screen and says where the sections are; the colours check what it says
             self.hunt_say("asking the vision model where the sections of the screen are")
@@ -1177,7 +1230,13 @@ class HuntMixin:
                 if not self.alive():
                     return
                 self.note_failed_attack(tsig)
-                wait_s = 180 if self.attack_refused else 30  # next to a door: leave that bot alone for a while
+                spot_key = (round(target[0] / 0.04), round(target[1] / 0.04))
+                fails = self.fail_spots[spot_key] = self.fail_spots.get(spot_key, 0) + 1
+                # a bot that never gives a fight at the same place (something on the wall that looks like a name, or a
+                # bot behind it) is left alone for longer each time
+                wait_s = 30 if fails == 1 else 120 if fails == 2 else 900
+                if self.attack_refused:
+                    wait_s = max(wait_s, 180)  # next to a door: leave that bot alone for a while
                 log("HUNT no fight started at that spot: ignoring it for %d s" % wait_s)
                 bad.append((target[0], target[1], time.time() + wait_s))
                 continue
