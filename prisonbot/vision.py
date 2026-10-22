@@ -196,7 +196,22 @@ def find_bars(h):
                 return False
         return True
 
-    out = [(fx + b[2] / rw * fw, fy + (b[0] + b[1]) / 2 / rh * fh) for b in bars if lone(b)]
+    def fill(b):
+        """Health left in a bar: its bright part over its whole length (the lost part is dark), 0..1."""
+        j = (b[0] + b[1]) // 2
+        px = lambda i: (buf[(j * rw + i) * 4 + 2], buf[(j * rw + i) * 4 + 1], buf[(j * rw + i) * 4])
+        lo = hi = min(max(b[2], 0), rw - 1)
+        gap = 4  # the two tones may be separated by a thin blended pixel line
+        while lo > 0 and any(_bar(*px(i)) for i in range(max(lo - gap, 0), lo)):
+            lo -= 1
+        while hi < rw - 1 and any(_bar(*px(i)) for i in range(hi + 1, min(hi + gap + 1, rw))):
+            hi += 1
+        top = max(px(i)[0] for i in range(lo, hi + 1))
+        if top < 190 and fy + j / rh * fh > 0.12:
+            return 0.0  # nothing bright anywhere (the top of the screen is shaded, so only the lower bars count)
+        return sum(px(i)[0] >= top * 0.8 for i in range(lo, hi + 1)) / float(hi - lo + 1)
+
+    out = [(fx + b[2] / rw * fw, fy + (b[0] + b[1]) / 2 / rh * fh, fill(b)) for b in bars if lone(b)]
     me = None
     try:
         me = [(m[0], m[1]) for m in find_labels(buf, rw, rh, w / 2000.0, _mine)]
@@ -205,7 +220,12 @@ def find_bars(h):
     out = [p for p in out if not any(abs(p[0] - (fx + mx * fw)) < 0.03 and 0 < p[1] - (fy + my * fh) < 0.07
                                      for mx, my in (me or []))]
     out = [p for p in out if not (p[0] < 0.27 and p[1] < 0.16)]  # the HUD boxes (points, attacks, weapon) top left
-    return sorted(((p[0], min(p[1] + BAR_DROP, 0.9)) for p in out), key=lambda p: (p[0] - 0.5) ** 2 + (p[1] - 0.65) ** 2)
+    pts = sorted(((p[0], min(p[1] + BAR_DROP, 0.9), p[2]) for p in out), key=lambda p: (p[0] - 0.5) ** 2 + (p[1] - 0.65) ** 2)
+    LAST_BARS[:] = [((p[0], p[1]), p[2]) for p in pts]  # (body point, health left) of the bars of the last scan
+    return [(p[0], p[1]) for p in pts]
+
+
+LAST_BARS = []
 
 
 # --- ATAQUES: the number of attacks left this turn (top left HUD box, one big orange digit; red when 0).

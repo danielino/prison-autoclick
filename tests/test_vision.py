@@ -159,3 +159,14 @@ def test_turn_line_is_the_short_yellow_text(monkeypatch):
     paint(other, 1200, 20, 10, 700, 16, (230, 30, 30))  # an enemy attack line: red
     assert not vision.turn_line_from_buf(other, 1200, 40, 2000)
     assert not vision.turn_line_from_buf(blank(1200, 40, (30, 30, 30)), 1200, 40, 2000)
+
+
+def test_find_bars_measures_the_health_left(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    s.paint(900, 300, 990, 307, (141, 25, 8))  # lost health: dark
+    s.paint(900, 300, 920, 307, (228, 10, 1))  # what is left: 20 of 90 px
+    s.paint(1200, 500, 1290, 507, (228, 10, 1))  # a full bar
+    bars = vision.find_bars(0)
+    assert len(bars) == 2
+    fills = sorted(round(f, 1) for p, f in vision.LAST_BARS)
+    assert fills == [0.2, 1.0]

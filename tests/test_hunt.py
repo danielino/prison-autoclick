@@ -127,3 +127,26 @@ def test_the_last_hit_spot_is_clicked_when_no_bot_is_seen(monkeypatch):
     b.fight_spot = (0.52, 0.10)
     assert b.hunt_manual_attack(1, None)
     assert b.moves == [(0.52, 0.10)] and clicks == ["L"]
+
+
+def test_a_new_target_is_the_bot_with_the_least_health(monkeypatch):
+    patch(monkeypatch, [], [(0.34, 0.14), (0.47, 0.27), (0.53, 0.11)])
+    monkeypatch.setattr(hunt, "LAST_BARS", [((0.34, 0.14), 0.97), ((0.47, 0.27), 0.19), ((0.53, 0.11), 0.99)])
+    b = Bot()
+    b.hunt_manual_attack(1, (0.34, 0.14))  # the opening attack was on the full one on the left
+    assert b.moves == [(0.47, 0.27)]
+    assert b.fight_spot == (0.47, 0.27)
+
+
+def test_the_weakest_bot_stays_the_target_until_it_dies_then_the_next_weakest(monkeypatch):
+    patch(monkeypatch, [], [(0.34, 0.14), (0.47, 0.27), (0.53, 0.11)])
+    monkeypatch.setattr(hunt, "LAST_BARS", [((0.34, 0.14), 0.97), ((0.47, 0.27), 0.19), ((0.53, 0.11), 0.9)])
+    b = Bot()
+    b.hunt_manual_attack(1, None)
+    b.hunt_manual_attack(1, None)
+    assert b.moves == [(0.47, 0.27)] * 2
+    # it dies: its bar is gone, the other two are far away
+    patch(monkeypatch, [], [(0.34, 0.14), (0.53, 0.11)])
+    monkeypatch.setattr(hunt, "LAST_BARS", [((0.34, 0.14), 0.97), ((0.53, 0.11), 0.9)])
+    b.hunt_manual_attack(1, None)
+    assert b.moves[-1] == (0.53, 0.11)

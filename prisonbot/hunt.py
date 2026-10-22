@@ -189,22 +189,30 @@ class HuntMixin:
         """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
         stands somewhere else, so the scene is scanned again)."""
         locked = getattr(self, "fight_spot", None)  # the bot hit first: keep hitting that one
-        ref = locked or spot or (0.5, 0.5)
         me = find_self(h)
+        bars = find_bars(h)
+        fills = {p: f for p, f in LAST_BARS if p in bars}  # health left of each bar of this scan
         cands = []  # the red health bars are the reliable cue in a fight (the name label changes colour and the
-        for group in (find_bars(h), find_bots(h)):  # label scan also picks up floor and text): bars first, then labels
-            found = []
+        for group in (bars, find_bots(h)):  # label scan also picks up floor and text): bars first, then labels
             for p in group:
                 if me and abs(p[0] - me[0]) < 0.07 and -0.02 < p[1] - me[1] < 0.26:
                     continue  # that is our own character (label to feet)
-                if all(abs(p[0] - q[0]) > 0.05 or abs(p[1] - q[1]) > 0.05 for q in cands + found):
-                    found.append(p)
-            found.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
-            cands += found
+                if all(abs(p[0] - q[0]) > 0.05 or abs(p[1] - q[1]) > 0.05 for q in cands):
+                    cands.append(p)
+        if fills:
+            log("HUNT health of the bots: %s" % ", ".join("(%.3f,%.3f) %.0f%%" % (p[0], p[1], f * 100) for p, f in fills.items()))
+        if locked and cands and min((p[0] - locked[0]) ** 2 + (p[1] - locked[1]) ** 2 for p in cands) > 0.1 ** 2:
+            log("HUNT the bot hit before is gone (dead): choosing the weakest one")
+            locked = self.fight_spot = None
         if locked:
             # both attacks of a turn go to the same bot until it dies: whatever was seen near the last hit (bar or
             # label) comes first, even if its bar is hidden and only the label shows
             cands.sort(key=lambda p: (p[0] - locked[0]) ** 2 + (p[1] - locked[1]) ** 2)
+        else:
+            # a new target: the bar with the least health first (bars within 10% of each other count as equal, then
+            # the one nearest to the spot of the attack); labels have no health to compare and come after the bars
+            ref = spot or (0.5, 0.5)
+            cands.sort(key=lambda p: (p not in bars, round(fills.get(p, 1.0) / 0.1), (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2))
         if not cands and locked:
             log("HUNT manual attack: no bot seen, clicking where the last attack landed")
             cands = [locked]  # the bot hit a moment ago has not gone anywhere; its bar may be hidden by the hit's effects
