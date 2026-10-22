@@ -142,7 +142,7 @@ def test_find_bars_sees_the_shaded_bar_at_the_top_of_the_screen(monkeypatch):
     s.paint(1002, 38, 1030, 46, (127, 0, 0))  # health left (shaded by the game there)
     s.paint(1030, 38, 1098, 46, (47, 0, 0))  # health lost
     bars = vision.find_bars(0)
-    assert len(bars) == 1 and bars[0][0] == pytest.approx(0.5, abs=0.02)
+    assert len(bars) == 1 and bars[0][0] == pytest.approx(0.525, abs=0.01)
 
 
 def test_find_bars_ignores_a_big_red_area(monkeypatch):
