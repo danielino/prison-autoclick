@@ -95,7 +95,8 @@ class App(HuntMixin, HealMixin):
         if self.state in ("MENU", "SPEED", "REC_SLOT", "PLAY_SLOT", "HUNT_SETUP"):
             self.blink = not self.blink if int(time.time() * 2) % 2 == 0 else self.blink
         self.lbl.config(text="\n".join(lines))
-        self.ov.geometry("+%d+%d" % (x + 12, y + 12))
+        # while running, keep the box off the HUD (the ATAQUES number is read from the screen there)
+        self.ov.geometry("+%d+%d" % (x + 12, y + (int(hgt * 0.20) if self.state == "RUN" else 12)))
         self.ov.deiconify()
         self.ov.attributes("-topmost", True)
 

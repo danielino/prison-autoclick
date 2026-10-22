@@ -242,6 +242,7 @@ class HuntMixin:
         miss = 0  # manual attack rounds in a row where no click worked
         held_since = None  # since when Ctrl+R waits for the chat to say it is our turn
         unread = 0  # snapshots saved of the ATAQUES box while it could not be read
+        await_turn = None  # since when we wait for "El turno es tuyo." after ending the turn or repeating it
         while True:
             if not self.wait(0.4):
                 return False
@@ -257,13 +258,19 @@ class HuntMixin:
                 if away and now - away >= 2.0:
                     end_turn, sent_r, fails = False, None, 0
                 if sent_r and mine and now - sent_r >= 3.0:
-                    # still our turn 3 s after Ctrl+R: the game said "La secuencia de repetición no puede ser ejecutada"
-                    # (the bot it repeated on is dead and another one is in the fight): attack by hand again
                     sent_r = None
-                    log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
-                    snapshot(h, "ctrl-r-failed")  # what the chat says (the game explains why it cannot repeat)
-                    manual, end_turn, self.fight_spot, bonus, rage = self.OPENING, False, None, False, False
-                    total = self.OPENING  # first bot dead: new target
+                    if not chat_turn_is_mine(h):
+                        # the green rings stay on while the repeated attacks and the enemy's turn play: the chat no longer
+                        # ends with "El turno es tuyo." so the repeat worked; do nothing until the turn comes back
+                        log("HUNT Ctrl+R worked: waiting for my next turn")
+                        await_turn = now
+                    else:
+                        # still our turn 3 s after Ctrl+R: the game said "La secuencia de repetición no puede ser
+                        # ejecutada" (the bot it repeated on is dead and another one is in the fight): attack by hand
+                        log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
+                        snapshot(h, "ctrl-r-failed")  # what the chat says (the game explains why it cannot repeat)
+                        manual, end_turn, self.fight_spot, bonus, rage = self.OPENING, False, None, False, False
+                        total = self.OPENING  # first bot dead: new target
                 # after the first attack the green rings get thin and may vanish for a while although it is still our
                 # turn (attacks left): keep going for 8 s after they were last seen
                 still_mine = mine or (0 < manual < total and away is not None and now - away < 8.0)
@@ -277,6 +284,16 @@ class HuntMixin:
                         unread += 1
                         log("HUNT the ATAQUES number cannot be read: saving a snapshot of the HUD")
                         snapshot(h, "ataques-unreadable", (0.0, 0.0, 0.30, 0.16))
+                    if await_turn is not None:
+                        # after Ctrl+T / Ctrl+R the enemy plays: any click now would be wasted (the chat changes with its
+                        # lines and the click would count as done). Wait for the newest chat line "El turno es tuyo."
+                        # (20 s at most, in case the line cannot be read)
+                        if chat_turn_is_mine(h) or now - await_turn >= 20.0:
+                            await_turn = None
+                        else:
+                            self.hunt_say("waiting for the enemy to finish its turn")
+                            last = now - max(self.cfg["repeat_interval"], 5.0) + 1.0
+                            continue
                     third = left >= 3 if left is not None else hp < 0.5  # the third attack exists below 50% health
                     if left is None and manual == total == self.OPENING and hp < 0.5 and not bonus:
                         # no HUD number and below 50% health: a fresh turn has three attacks, do not wait for the
@@ -326,6 +343,7 @@ class HuntMixin:
                         self.hunt_say("my turn: ending it (Ctrl+T)")
                         key_combo(0x1D, 0x14)
                         end_turn = False
+                        await_turn = now
                     elif not chat_turn_is_mine(h) and now - (held_since or now) < 15.0:
                         # the green rings stay on while the enemy plays: Ctrl+R then gets "No es posible REPETIR el turno
                         # ahora". It is accepted when the newest chat line is "El turno es tuyo." (15 s at most, in case

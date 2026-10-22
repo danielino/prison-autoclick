@@ -134,6 +134,25 @@ def test_ctrl_r_waits_for_the_chat_to_say_it_is_our_turn(monkeypatch):
     assert events.startswith("AATR") and len(calls) >= 3  # two looks while the enemy was still playing, then it went
 
 
+def test_a_repeat_that_worked_is_not_followed_by_manual_attacks_in_the_enemy_turn(monkeypatch):
+    # the rings stay green during the repeated attacks and the enemy's turn; the chat does not say "turno tuyo" there
+    mine_line = {"v": True}
+    monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: mine_line["v"])
+    f = Fight([MINE] * 30 + [None, None, None], 0.9)
+    monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
+    monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
+    monkeypatch.setattr(hunt, "read_health", lambda h: 0.9)
+
+    def key(a, b):
+        f.events.append({0x14: "T", 0x13: "R"}[b])
+        if b == 0x13:
+            mine_line["v"] = False  # the repeat is playing
+    monkeypatch.setattr(hunt, "key_combo", key)
+    assert f.hunt_fight(1)
+    ev = "".join(f.events)
+    assert ev.startswith("AATR") and "RA" not in ev
+
+
 def test_ctrl_r_is_sent_anyway_when_the_chat_line_is_never_recognised(monkeypatch):
     monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: False)
     events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 12 + [None, None, None], hp=0.9)
