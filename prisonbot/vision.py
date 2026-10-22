@@ -155,8 +155,9 @@ BAR_DROP = BODY_DROP - 0.027  # the red health bar sits 0.027 of the screen heig
 
 def _bar(r, g, b):
     """A health bar: bright red where there is health left (228,10,1), dark red where it was lost (141,25,8). A bot that
-    is already hurt has a mostly dark bar, so both reds count."""
-    return r >= 120 and g <= 65 and b <= 65 and r - g >= 100
+    is already hurt has a mostly dark bar, so both reds count. The top of the screen is shaded by the game (the same bar
+    is (127,0,0) and (47,0,0) there), so the test is on the ratio: nearly no green or blue compared with the red."""
+    return r >= 40 and r - g >= 35 and g * 10 <= r * 3 and b * 10 <= r * 3
 
 
 def find_bars(h):
@@ -186,7 +187,16 @@ def find_bars(h):
             bars[-1][1] = j
         else:
             bars.append([j, j, bx])
-    out = [(fx + b[2] / rw * fw, fy + (b[0] + b[1]) / 2 / rh * fh) for b in bars if b[1] - b[0] <= 0.02 * hh]
+    def lone(b):  # a bar is a thin rectangle with a dark border: red clothes, a tinted body or damage digits are not
+        if not int(3 * w / 2000.0) <= b[1] - b[0] + 1 <= int(0.014 * hh):
+            return False
+        for j in (b[0] - 3, b[1] + 3):
+            if 0 <= j < rh and any(_bar(buf[(j * rw + i) * 4 + 2], buf[(j * rw + i) * 4 + 1], buf[(j * rw + i) * 4])
+                                   for i in range(max(b[2] - 8, 0), min(b[2] + 9, rw))):
+                return False
+        return True
+
+    out = [(fx + b[2] / rw * fw, fy + (b[0] + b[1]) / 2 / rh * fh) for b in bars if lone(b)]
     me = None
     try:
         me = [(m[0], m[1]) for m in find_labels(buf, rw, rh, w / 2000.0, _mine)]
