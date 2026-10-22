@@ -311,6 +311,40 @@ def grab_chat(h):
     return grab(x + int(fx * w), y + int(fy * hh), int(fw * w), int(fh * hh))
 
 
+SNAP_KEEP = 50
+CHAT_LOG = (0.0, 0.80, 0.62, 0.18)  # the last lines of the chat
+
+
+def snapshot(h, name, area=CHAT_LOG):
+    """Save a PNG of a screen area (default: the chat) in `snapshots/` next to the log, keeping the last SNAP_KEEP.
+    For debugging what the game answered; it stays on this computer. Never raises."""
+    try:
+        import struct, zlib
+        fx, fy, fw, fh = area
+        x, y, w, hh = client_rect(h)
+        pw, ph = int(fw * w), int(fh * hh)
+        buf = grab(x + int(fx * w), y + int(fy * hh), pw, ph)
+        raw = b"".join(b"\0" + b"".join(bytes((buf[i + 2], buf[i + 1], buf[i])) for i in range(r * pw * 4, (r + 1) * pw * 4, 4))
+                       for r in range(ph))
+
+        def chunk(tag, data):
+            body = tag + data
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", pw, ph, 8, 2, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+        folder = os.path.join(HERE, "snapshots")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "%s-%s.png" % (time.strftime("%Y%m%d-%H%M%S"), name))
+        with open(path, "wb") as f:
+            f.write(png)
+        for old in sorted(os.listdir(folder))[:-SNAP_KEEP]:
+            os.remove(os.path.join(folder, old))
+        log("snapshot saved: %s" % path)
+    except Exception as e:
+        log("snapshot failed: %s" % e)
+
+
 def chat_unique_error(h):
     """True if the newest chat line is a long, fully red message (screenshots: ~2750 red px, 43% of the width wide;
     other players' lines only have a short red name)."""

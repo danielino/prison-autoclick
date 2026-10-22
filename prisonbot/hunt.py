@@ -256,6 +256,7 @@ class HuntMixin:
                     # (the bot it repeated on is dead and another one is in the fight): attack by hand again
                     sent_r = None
                     log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
+                    snapshot(h, "ctrl-r-failed")  # what the chat says (the game explains why it cannot repeat)
                     manual, end_turn, self.fight_spot, bonus, rage = self.OPENING, False, None, False, False
                     total = self.OPENING  # first bot dead: new target
                 # after the first attack the green rings get thin and may vanish for a while although it is still our

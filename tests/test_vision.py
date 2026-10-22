@@ -100,3 +100,16 @@ def test_detect_combat_banner(monkeypatch):
     assert not vision.detect(0, "combat")[0]
     s.paint(int(fx * 2000), int(fy * 1000), int((fx + fw) * 2000), int((fy + fh) * 1000), (220, 40, 40))
     assert vision.detect(0, "combat")[0]
+
+
+def test_snapshot_writes_a_png_and_keeps_only_the_latest(monkeypatch, tmp_path):
+    monkeypatch.setattr(vision, "HERE", str(tmp_path))
+    monkeypatch.setattr(vision, "client_rect", lambda h: (0, 0, 100, 100))
+    monkeypatch.setattr(vision, "grab", lambda x, y, w, hh: blank(w, hh, (200, 30, 30)))
+    monkeypatch.setattr(vision, "SNAP_KEEP", 2)
+    for n in range(4):
+        monkeypatch.setattr(vision.time, "strftime", lambda f, n=n: "2026010%d-000000" % n)
+        vision.snapshot(1, "t")
+    files = sorted((tmp_path / "snapshots").iterdir())
+    assert len(files) == 2 and files[-1].name.startswith("20260103")
+    assert files[-1].read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
