@@ -186,7 +186,7 @@ class HuntMixin:
 
     OPENING = 2  # manual attacks (Ctrl+A + click) before Ctrl+R has something to repeat
 
-    def hunt_manual_attack(self, h, spot):
+    def hunt_manual_attack(self, h, spot, max_tries=6):
         """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
         stands somewhere else, so the scene is scanned again)."""
         locked = getattr(self, "fight_spot", None)  # the bot hit first: keep hitting that one
@@ -236,9 +236,14 @@ class HuntMixin:
         # the game accepts (diamond rooms: the feet are), and a failed click must not send the attack to another bot
         n, c0 = len(self.AIM_VARIANTS), cands[0]
         order = [(self.manual_pref + k) % n for k in range(n if len(cands) < 2 else 4)]
-        tries = [((min(max(c0[0] + self.AIM_VARIANTS[v][0], 0.0), 1.0), min(max(c0[1] + self.AIM_VARIANTS[v][1], 0.0), 1.0)), v)
-                 for v in order] + [(c, None) for c in cands[1:3]]
-        for p, v in tries:
+        steps = [(c0, v) for v in order] + [(c, None) for c in cands[1:3]]
+        for k, (c, v) in enumerate(steps[:max_tries]):
+            if v is not None:
+                c = c0  # the bot may have moved (camera, walking) since the last click: follow it
+                dx, dy = self.AIM_VARIANTS[v]
+                p = (min(max(c[0] + dx, 0.0), 1.0), min(max(c[1] + dy, 0.0), 1.0))
+            else:
+                p = c
             base = grab_chat(h)
             self.hunt_move(h, *p)
             time.sleep(0.25)  # let the game notice the pointer over the bot before clicking
@@ -252,6 +257,10 @@ class HuntMixin:
                         self.manual_pref = v
                     return True
             log("HUNT manual attack at (%.3f,%.3f): nothing happened, trying the next click" % p)
+            # scan the area again before the next click: the camera or the bot may have moved
+            near = [q for q in find_bars(h) if (q[0] - c0[0]) ** 2 + (q[1] - c0[1]) ** 2 < 0.1 ** 2]
+            if near:
+                c0 = min(near, key=lambda q: (q[0] - c0[0]) ** 2 + (q[1] - c0[1]) ** 2)
         return False
     def hunt_fight(self, h, spot=None):
         """Attack by hand for the first turns (Ctrl+R has nothing to repeat yet), then Ctrl+R on every turn of yours until
@@ -340,16 +349,24 @@ class HuntMixin:
                         # read as 1 or 3, a 1 as 0): after the first attack we count our own, never the HUD's number
                         manual, total, bonus = left, max(total, left), True
                         rage = True  # a turn played by hand with three attacks is what Ctrl+R repeats next
+                    if left == 0 and 0 < manual < total:
+                        # the red 0 of the HUD (after at least one attack of this turn) cannot be mistaken for another digit
+                        log("HUNT the HUD shows 0 attacks left: ending the turn")
+                        manual, end_turn = 0, True
                     if manual > 0:
                         log("HUNT my turn (buttons %.3f) -> manual attack (%d left)" % (ft, manual))
                         self.hunt_say("my turn: attacking (click on the bot)")
-                        if self.hunt_manual_attack(h, spot):
+                        third_try = bonus and total == self.OPENING + 1 and manual == 1  # the attack that may not exist
+                        if self.hunt_manual_attack(h, spot, 2 if third_try else 6):
                             manual -= 1
                             if manual == 0 and hp < 0.5 and not bonus:
                                 manual, bonus, rage, total = 1, True, True, self.OPENING + 1  # third attack below 50%
                                 log("HUNT health below 50%: third attack")
                             end_turn = manual == 0  # both attacks done: spend the leftover action points by ending the turn
                             miss = 0
+                        elif third_try:
+                            log("HUNT the third attack did not work: there was none, ending the turn")
+                            manual, end_turn, miss = 0, True, 0
                         else:
                             miss += 1
                             if miss % 3 == 0:  # the clicks keep hitting nothing: let the game move on instead of looping

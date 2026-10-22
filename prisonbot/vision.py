@@ -237,8 +237,19 @@ ATTACK_GLYPHS = {  # normalised bitmaps cut from real screenshots
         "....####", "....####", "....####", "....####", "....####", "....####"),
     2: ("..#####.", ".#######", ".###.###", "####.###", "####.###", ".....###",
         "....###.", "...###..", "..####..", ".####.##", ".#######", ".#######"),
+    3: (".######.", "########", "########", "###..###", "...#####", "...####.",
+        "...#####", ".....###", "###..###", "###..###", "########", ".######."),
 }
-
+ATTACK_VARIANTS = [  # more cuts of the same digits (the game scales and smooths them a little differently)
+    (2, ("..#####.", ".#######", "########", "####.###", "###..###", "....####",
+         "....###.", "...###..", "..###...", ".####...", ".#######", "########")),
+    (2, ("..#####.", ".#######", "####.###", "####.###", "###..###", ".....###",
+         "...####.", "...###..", "..###...", ".###....", ".#######", "########")),
+    (2, ("..#####.", "########", "########", "###..###", "###..###", "....####",
+         "....###.", "..####..", "..###...", ".###....", "########", "########")),
+    (1, (".#..####", "....####", "....####", "....####", "....####", "....####",
+         "....####", "....####", "....####", "....####", "....####", "....####")),
+]
 
 def _hud_digit(r, g, b):  # orange digit and red zero
     return r >= 190 and b <= 120 and r - b >= 100
@@ -290,10 +301,9 @@ def attacks_from_buf(buf, w, hh):
 
     def dist(t):
         return sum(1 for a, b in zip("".join(grid), "".join(t)) if a != b)
-    best = min(ATTACK_GLYPHS, key=lambda k: dist(ATTACK_GLYPHS[k]))
-    if dist(ATTACK_GLYPHS[best]) <= 14:
-        return best
-    return 3 if bw / bh > 0.4 else None  # a wide digit that is neither 1 nor 2: 3 (the only other one that occurs)
+    cuts = [(k, g) for k, g in ATTACK_GLYPHS.items()] + ATTACK_VARIANTS
+    d, best = min((dist(g), k) for k, g in cuts)
+    return best if d <= 12 else None  # a shape that matches no digit is not guessed
 
 
 def read_attacks(h):

@@ -27,7 +27,7 @@ class Fight(hunt.HuntMixin):
     def hunt_say(self, t):
         pass
 
-    def hunt_manual_attack(self, h, spot):
+    def hunt_manual_attack(self, h, spot, max_tries=6):
         self.events.append("A")
         return True
 
@@ -88,11 +88,24 @@ def test_hud_with_two_attacks_leaves_it_to_ctrl_r_afterwards(monkeypatch):
     assert events == "AAT" + "R"
 
 
-def test_misread_hud_digits_do_not_cut_a_turn_short(monkeypatch):
-    # the reader takes a 2 for a 1 or a 0: only a 3 at the start of a turn is believed, the rest is our own count
-    events = run(monkeypatch, [MINE, MINE, MINE, OTHER, OTHER, None, None, None], hp=0.9, attacks=[2, 0, 0, 0])
-    assert events.startswith("AAT")
+def test_a_red_zero_after_an_attack_ends_the_turn_at_once(monkeypatch):
+    # the turn had only two attacks and the planned third one would be a wasted click: the HUD says 0 after the first
+    events = run(monkeypatch, [MINE, MINE, MINE, OTHER, OTHER, None, None, None], hp=0.9, attacks=[None, 0, 0, 0])
+    assert events.startswith("AT")
 
+
+def test_a_third_attack_that_does_nothing_ends_the_turn_instead_of_retrying(monkeypatch):
+    f = Fight([MINE] * 12 + [OTHER] * 3 + [None, None, None], 0.4)
+    results = iter([True, True])
+    seen = []
+    f.hunt_manual_attack = lambda h, spot, n=6, r=results: (lambda ok: f.events.append("A" if ok else "x") or seen.append(n) or ok)(next(r, False))
+    monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
+    monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
+    monkeypatch.setattr(hunt, "read_health", lambda h: 0.4)
+    monkeypatch.setattr(hunt, "key_combo", lambda a, b: f.events.append({0x14: "T", 0x13: "R"}[b]))
+    assert f.hunt_fight(1)
+    ev = "".join(f.events)
+    assert ev.startswith("AAxT") and seen[2] == 2  # the third click got two tries only, then Ctrl+T
 
 def test_three_attacks_on_a_later_ctrl_r_turn_trigger_one_manual_turn(monkeypatch):
     # turn 1: 2 attacks by hand + Ctrl+T; turn 2 shows ATAQUES 3 (health fell below 50%): by hand again with three
@@ -104,7 +117,7 @@ def test_three_attacks_on_a_later_ctrl_r_turn_trigger_one_manual_turn(monkeypatc
 
 def test_repeated_misses_end_the_turn_instead_of_looping(monkeypatch):
     f = Fight([MINE] * 40 + [None, None, None], 0.9)
-    f.hunt_manual_attack = lambda h, spot: f.events.append("x") or False
+    f.hunt_manual_attack = lambda h, spot, n=6: f.events.append("x") or False
     monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
     monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
     monkeypatch.setattr(hunt, "read_health", lambda h: 0.9)
@@ -118,7 +131,7 @@ def test_misses_after_an_attack_in_the_turn_pass_it_with_ctrl_t_not_ctrl_r(monke
     # "No es posible REPETIR el turno ahora": Ctrl+R is refused once the turn has an action in it
     f = Fight([MINE] * 40 + [None, None, None], 0.9)
     results = iter([True])
-    f.hunt_manual_attack = lambda h, spot, r=results: (lambda ok: f.events.append("A" if ok else "x") or ok)(next(r, False))
+    f.hunt_manual_attack = lambda h, spot, n=6, r=results: (lambda ok: f.events.append("A" if ok else "x") or ok)(next(r, False))
     monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
     monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
     monkeypatch.setattr(hunt, "read_health", lambda h: 0.9)

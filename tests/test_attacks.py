@@ -19,7 +19,7 @@ def render(glyph, color, w=40, h=70, scale=3, label=True):
 
 
 def test_reads_one_and_two():
-    for n in (1, 2):
+    for n in (1, 2, 3):
         buf, w, h = render(vision.ATTACK_GLYPHS[n], ORANGE)
         assert vision.attacks_from_buf(buf, w, h) == n
 
@@ -29,12 +29,16 @@ def test_red_digit_is_zero():
     assert vision.attacks_from_buf(buf, w, h) == 0
 
 
-def test_a_wide_unknown_digit_is_three():
-    three = ("..####..", ".######.", "##....##", "......##", "....###.", "....###.",
-             "......##", "......##", "##....##", "##....##", ".######.", "..####..")
-    buf, w, h = render(three, ORANGE)
+def test_reads_three():
+    buf, w, h = render(vision.ATTACK_GLYPHS[3], ORANGE)
     assert vision.attacks_from_buf(buf, w, h) == 3
 
+
+def test_a_shape_that_matches_no_digit_is_not_guessed():
+    odd = ("########", "#......#", "#......#", "#......#", "#......#", "#......#",
+           "#......#", "#......#", "#......#", "#......#", "#......#", "########")
+    buf, w, h = render(odd, ORANGE)
+    assert vision.attacks_from_buf(buf, w, h) is None
 
 def test_empty_box_is_none():
     assert vision.attacks_from_buf(blank(40, 70, (30, 30, 30)), 40, 70) is None
