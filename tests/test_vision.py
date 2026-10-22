@@ -113,3 +113,11 @@ def test_snapshot_writes_a_png_and_keeps_only_the_latest(monkeypatch, tmp_path):
     files = sorted((tmp_path / "snapshots").iterdir())
     assert len(files) == 2 and files[-1].name.startswith("20260103")
     assert files[-1].read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_find_bars_sees_a_hurt_bot_whose_bar_is_mostly_dark_red(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    s.paint(900, 200, 920, 207, (228, 10, 1))  # health left: bright red
+    s.paint(920, 200, 990, 207, (141, 25, 8))  # health lost: dark red (seen on a real screenshot)
+    bars = vision.find_bars(0)
+    assert len(bars) == 1 and bars[0][0] == pytest.approx(0.4725, abs=0.01)

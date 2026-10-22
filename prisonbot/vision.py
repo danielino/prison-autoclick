@@ -150,6 +150,12 @@ def find_bots(h):
 BAR_DROP = BODY_DROP - 0.027  # the red health bar sits 0.027 of the screen height below the name label
 
 
+def _bar(r, g, b):
+    """A health bar: bright red where there is health left (228,10,1), dark red where it was lost (141,25,8). A bot that
+    is already hurt has a mostly dark bar, so both reds count."""
+    return r >= 120 and g <= 65 and b <= 65 and r - g >= 100
+
+
 def find_bars(h):
     """Fallback inside a fight, where the name label is drawn in another colour: the red health bars shown under
     every combatant. -> body points (client fractions) of the bars that are not yours, nearest to the centre first."""
@@ -163,7 +169,7 @@ def find_bars(h):
         run = best = bx = 0
         for i in range(rw):
             k = (j * rw + i) * 4
-            if _diamond(buf[k + 2], buf[k + 1], buf[k]):
+            if _bar(buf[k + 2], buf[k + 1], buf[k]):
                 run += 1
                 if run > best:
                     best, bx = run, i - run // 2
