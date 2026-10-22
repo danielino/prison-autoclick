@@ -449,17 +449,20 @@ class HuntMixin:
                 if away and now - away >= 2.0:
                     end_turn, sent_r, fails = False, None, 0
                 if sent_r and mine and now - sent_r >= 3.0:
-                    sent_r = None
-                    if not chat_turn_is_mine(h):
-                        # the green rings stay on while the repeated attacks and the enemy's turn play: the chat no longer
-                        # ends with "El turno es tuyo." so the repeat worked; do nothing until the turn comes back
+                    # what the chat says after Ctrl+R: a green line (our attack) below "El turno es tuyo." = it worked;
+                    # only red lines there = the game refused ("No es posible REPETIR el turno ahora": nothing to repeat)
+                    st = chat_state(h)
+                    if st == "acted" or (st is None and not chat_turn_is_mine(h)):
+                        sent_r = None
                         log("HUNT Ctrl+R worked: waiting for my next turn")
                         stats.add("repeats_ok")
                         await_turn = now
-                    else:
-                        # still our turn 3 s after Ctrl+R: the game said "La secuencia de repetición no puede ser
-                        # ejecutada" (the bot it repeated on is dead and another one is in the fight): attack by hand
-                        log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
+                    elif st == "refused" or now - sent_r >= 5.0:
+                        sent_r = None
+                        # nothing was done: attack by hand (also when the game says the sequence cannot be executed
+                        # because the bot it repeated on is dead and another one is in the fight)
+                        log("HUNT Ctrl+R did not work (%s): %d manual attacks, then Ctrl+T" % (
+                            "refused by the game" if st == "refused" else "no attack in the chat", self.OPENING))
                         stats.add("repeats_failed")
                         snapshot(h, "ctrl-r-failed")  # what the chat says (the game explains why it cannot repeat)
                         manual, end_turn, self.fight_spot, bonus, rage = self.OPENING, False, None, False, False

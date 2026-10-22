@@ -69,3 +69,24 @@ def test_chat_turn_is_mine_answers_true_when_nothing_can_be_told(monkeypatch):
     monkeypatch.setattr(vision, "client_rect", lambda h: (0, 0, 2000, 1000))
     monkeypatch.setattr(vision, "grab", lambda x, y, w, h: bytes(blank(w, h, (40, 40, 40))))
     assert vision.chat_turn_is_mine(1) is True
+
+
+def state(*lines):
+    return vision.chat_state_from_buf(chat(*lines), W, H, CW)
+
+
+def test_state_mine_acted_refused():
+    assert state(ENEMY, TURN) == "mine"
+    assert state(ENEMY, TURN, ATTACK) == "acted"
+    assert state(ENEMY, TURN, ATTACK, ENEMY) == "acted"
+    assert state(ENEMY, TURN, ENEMY) == "refused"  # "No es posible REPETIR el turno ahora." (red) right after the turn line
+    assert state(ENEMY, TURN, ENEMY, PLAYER) == "refused"
+
+
+def test_state_without_a_turn_line_in_view():
+    assert state(ENEMY, ENEMY) == "acted"
+    assert state(PLAYER, PLAYER) is None
+
+
+def test_a_refusal_still_leaves_the_turn_ours():
+    assert owner(ENEMY, TURN, ENEMY) == "mine"

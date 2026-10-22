@@ -5,6 +5,7 @@ from prisonbot import hunt
 @pytest.fixture(autouse=True)
 def turn_line(monkeypatch):
     monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: True)  # the chat says it is our turn
+    monkeypatch.setattr(hunt, "chat_state", lambda h: "mine")  # ... and no attack of ours is in it
 
 
 class Fight(hunt.HuntMixin):
@@ -152,6 +153,7 @@ def test_a_repeat_that_worked_is_not_followed_by_manual_attacks_in_the_enemy_tur
     # the rings stay green during the repeated attacks and the enemy's turn; the chat does not say "turno tuyo" there
     mine_line = {"v": True}
     monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: mine_line["v"])
+    monkeypatch.setattr(hunt, "chat_state", lambda h: "mine" if mine_line["v"] else "acted")
     f = Fight([MINE] * 30 + [None, None, None], 0.9)
     monkeypatch.setattr(hunt, "read_attacks", lambda h: None)
     monkeypatch.setattr(hunt.time, "time", lambda: f.clock)
@@ -171,3 +173,18 @@ def test_ctrl_r_is_sent_anyway_when_the_chat_line_is_never_recognised(monkeypatc
     monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: False)
     events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 12 + [None, None, None], hp=0.9)
     assert events.startswith("AATR")  # after 15 s of waiting
+
+
+def test_a_refused_ctrl_r_is_not_mistaken_for_the_enemy_turn(monkeypatch):
+    # the chat shows red "No es posible REPETIR el turno ahora." after "El turno es tuyo.": nothing was repeated, so the
+    # next thing is manual attacks (before, the red line was read as the enemy playing and the bot looped on Ctrl+R)
+    monkeypatch.setattr(hunt, "chat_state", lambda h: "refused")
+    events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 14 + [None, None, None], hp=0.9)
+    assert events.startswith("AATR")
+    assert "AA" in events[4:8]  # right after the refused repeat: two attacks by hand
+
+
+def test_a_repeat_with_our_attack_in_the_chat_is_left_alone(monkeypatch):
+    monkeypatch.setattr(hunt, "chat_state", lambda h: "acted")
+    events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 8 + [None, None, None], hp=0.9)
+    assert events.startswith("AATR") and "A" not in events[4:5]

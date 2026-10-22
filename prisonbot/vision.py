@@ -419,26 +419,29 @@ CHAT_LINES = (0.0, 0.84, 0.62, 0.145)  # the last six or so chat lines
 
 
 def _yellow(r, g, b):
-    return r >= 215 and g >= 190 and b <= 90 and abs(r - g) <= 60
+    return r >= 170 and g >= 170 and b <= 90 and abs(r - g) <= 45  # the turn line, anti-aliased edges included
 
 
-def _chat_green(r, g, b):
-    return g >= 200 and r <= 90 and b <= 120
+def _line_red(r, g, b):
+    return r >= 140 and g <= 70 and b <= 70 and r - g >= 100
 
 
-def _chat_blue(r, g, b):
-    return r <= 90 and 100 <= g <= 200 and b >= 215
+def _line_green(r, g, b):
+    return g >= 150 and r <= 90 and b <= 120 and g - r >= 80
 
 
-def _chat_white(r, g, b):
-    return min(r, g, b) >= 190 and max(r, g, b) - min(r, g, b) <= 35
+def _line_blue(r, g, b):
+    return r <= 90 and 100 <= g <= 210 and b >= 180
 
 
-def chat_owner_from_buf(buf, w, hh, client_w):
-    """Who is acting, from the last chat lines: "mine" if the newest line that is a game message (not another player's
-    chat) is yellow ("El turno es tuyo.", or the yellow answer to a refused command), "theirs" if it is red, green or
-    blue (an attack, the bleeding, a death: the turn is running), None if no such line is in view. Other players' chat
-    lines (white text with a few coloured names) do not count: they used to hide the turn line."""
+def _ink(r, g, b):  # any other text-bright pixel (white, beige or grey chat of other players, cyan system lines)
+    return max(r, g, b) >= 195
+
+
+def _chat_line_types(buf, w, hh, client_w):
+    """The game messages among the last chat lines, oldest first, as letters: Y yellow (the turn line and answers to
+    refused commands), R red (enemy attacks, bleeding, "No es posible REPETIR el turno ahora"), G green (our attacks),
+    B blue. Other players' chat lines (white text with a few coloured names) are skipped."""
     k = client_w / 2000.0
     rows = []  # per pixel row: [yellow, red, green, blue, white]
     for y in range(hh):
@@ -449,13 +452,13 @@ def chat_owner_from_buf(buf, w, hh, client_w):
             r, g, b = buf[i + 2], buf[i + 1], buf[i]
             if _yellow(r, g, b):
                 c[0] += 1
-            elif _chat_red(r, g, b):
+            elif _line_red(r, g, b):
                 c[1] += 1
-            elif _chat_green(r, g, b):
+            elif _line_green(r, g, b):
                 c[2] += 1
-            elif _chat_blue(r, g, b):
+            elif _line_blue(r, g, b):
                 c[3] += 1
-            elif _chat_white(r, g, b):
+            elif _ink(r, g, b):
                 c[4] += 1
         rows.append(c)
     lines, cur, blank = [], None, 0
@@ -474,24 +477,50 @@ def chat_owner_from_buf(buf, w, hh, client_w):
                 cur = None
     if cur is not None:
         lines.append(cur)
-    for ln in reversed(lines):
+    types = []
+    for ln in lines:
         if ln[5] < max(int(5 * k), 3):
             continue  # a speck, not a line of text
         main = max(range(4), key=lambda i: ln[i])
-        text = sum(ln[:5])
-        if ln[main] >= 0.6 * text and ln[main] >= 12 * k * k:
-            return "mine" if main == 0 else "theirs"
-    return None
+        if ln[main] >= 0.7 * sum(ln[:5]) and ln[main] >= 12 * k * k:  # a game message is all of one colour
+            types.append("YRGB"[main])
+    return types
 
 
-def chat_turn_is_mine(h):
-    """It is our turn and nothing of ours has been done in it: the newest game message in the chat is yellow ("El turno
-    es tuyo."). Ctrl+R is only accepted then ("No es posible REPETIR el turno ahora" while the enemy plays or after an
-    action). With no game message in view (a flood of other players' chat) it answers True: waiting would not help."""
+def chat_state_from_buf(buf, w, hh, client_w):
+    """Where the turn is, from the last chat lines:
+    "mine"    the newest yellow line ("El turno es tuyo.") has nothing after it: it is our turn and nothing was done;
+    "acted"   a green line (our attack) comes after it, or there is no yellow line in view: the turn is running;
+    "refused" only red/blue lines come after it: we pressed something and the game refused ("No es posible REPETIR el
+              turno ahora."): nothing was done in the turn;
+    None      no game message in view."""
+    types = _chat_line_types(buf, w, hh, client_w)
+    if "Y" in types:
+        after = types[len(types) - types[::-1].index("Y"):]
+        if "G" in after:
+            return "acted"
+        return "refused" if after else "mine"
+    return "acted" if types else None
+
+
+def chat_owner_from_buf(buf, w, hh, client_w):
+    """"mine" / "theirs" / None (see chat_state_from_buf; a refused command still leaves the turn ours)."""
+    s = chat_state_from_buf(buf, w, hh, client_w)
+    return None if s is None else ("theirs" if s == "acted" else "mine")
+
+
+def chat_state(h):
     fx, fy, fw, fh = CHAT_LINES
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
-    return chat_owner_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w) != "theirs"
+    return chat_state_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+
+
+def chat_turn_is_mine(h):
+    """It is our turn and nothing of ours has been done in it (or the game refused what we tried). Ctrl+R is only
+    accepted then ("No es posible REPETIR el turno ahora" while the enemy plays or after an action). With no game message
+    in view (a flood of other players' chat) it answers True: waiting would not help."""
+    return chat_state(h) != "acted"
 
 
 def chat_unique_error(h):
