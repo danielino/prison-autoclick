@@ -7,7 +7,8 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm, diagnostic, stats
+from . import llm, diagnostic, stats, webstats
+import webbrowser
 
 
 class Gui:
@@ -87,6 +88,9 @@ class Gui:
         self.llmtimeout = tk.StringVar(value="%g" % self.cfg.get("llm_timeout", 20))
         self.llmwidth = tk.StringVar(value=str(int(self.cfg.get("llm_max_width", 1024))))
         self.statsint = tk.StringVar(value="%g" % self.cfg.get("stats_interval", 5))
+        self.webvar = tk.BooleanVar(value=bool(self.cfg.get("web_enabled")))
+        self.webport = tk.StringVar(value=str(int(self.cfg.get("web_port", 8080))))
+        self.weblan = tk.BooleanVar(value=bool(self.cfg.get("web_lan")))
 
         pick = ttk.LabelFrame(tab_hunt, text="Choosing bots")
         pick.pack(fill="x", padx=10, pady=4)
@@ -201,6 +205,9 @@ class Gui:
             self.cfg["hunt_home"] = bool(self.homevar.get())
             self.cfg["hunt_patrol"] = bool(self.patrolvar.get())
             self.cfg["stats_interval"] = min(max(float(self.statsint.get().replace(",", ".")), 0), 240)
+            self.cfg["web_enabled"] = bool(self.webvar.get())
+            self.cfg["web_port"] = int(min(max(float(self.webport.get()), 1024), 65535))
+            self.cfg["web_lan"] = bool(self.weblan.get())
             self.cfg["llm_timeout"] = min(max(float(self.llmtimeout.get().replace(",", ".")), 2), 300)
             self.cfg["llm_max_width"] = int(min(max(float(self.llmwidth.get()), 256), 2048))
             self.cfg["llm_enabled"] = bool(self.llmvar.get())
@@ -215,6 +222,31 @@ class Gui:
         except ValueError:
             return  # half-typed value: ignore until it is a number
         save(self.cfg)
+        self.web_apply()
+
+    # -- live web page
+    def web_apply(self):
+        """Start, stop or restart the live page when its settings changed."""
+        sig = (self.cfg.get("web_enabled"), self.cfg.get("web_port"), self.cfg.get("web_lan"))
+        if sig == getattr(self, "_web_sig", None):
+            return
+        self._web_sig = sig
+        webstats.start(self.cfg)
+        self.web_label()
+
+    def web_label(self):
+        if webstats.running():
+            where = webstats.address(self.cfg)
+            extra = ("  (other computers: http://<this PC's address>:%s/)" % self.cfg.get("web_port")) if self.cfg.get("web_lan") else ""
+            self.weburl.config(text="Live page: %s%s" % (where, extra), foreground="#1a7f37")
+        elif webstats.error():
+            self.weburl.config(text=webstats.error(), foreground="#b3261e")
+        else:
+            self.weburl.config(text="Live page is off.", foreground="gray")
+
+    def web_open(self):
+        if webstats.running():
+            webbrowser.open(webstats.address(self.cfg))
 
     # -- statistics of the session
     def build_stats(self, tab):
@@ -243,6 +275,20 @@ class Gui:
         ttk.Label(row, text="Write this summary to the log every (minutes, 0 = never)").pack(side="left")
         self.spin(row, self.statsint, 0, 240, 1, 6, self.apply).pack(side="left", padx=8)
         ttk.Label(row, foreground="gray", text="Counts since the program started (Reset clears them); only hunting time is counted.").pack(side="left", padx=8)
+        web = ttk.LabelFrame(tab, text="Live web page (what the bot is doing, the fight, in real time)")
+        web.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Checkbutton(web, variable=self.webvar, command=self.apply, text="Serve the live page").grid(
+            row=0, column=0, padx=8, pady=(6, 2), sticky="w")
+        ttk.Label(web, text="Port").grid(row=0, column=1, padx=(12, 4), pady=(6, 2), sticky="e")
+        self.spin(web, self.webport, 1024, 65535, 1, 7, self.apply).grid(row=0, column=2, pady=(6, 2), sticky="w")
+        ttk.Button(web, text="Open in the browser", command=self.web_open).grid(row=0, column=3, padx=12, pady=(6, 2))
+        ttk.Checkbutton(web, variable=self.weblan, command=self.apply, text=(
+            "Let other computers on the network see it (it only shows data, but anyone on the network can read it)")).grid(
+            row=1, column=0, columnspan=4, padx=8, sticky="w")
+        self.weburl = ttk.Label(web, foreground="gray")
+        self.weburl.grid(row=2, column=0, columnspan=4, padx=8, pady=(2, 8), sticky="w")
+        self._web_sig = (self.cfg.get("web_enabled"), self.cfg.get("web_port"), self.cfg.get("web_lan"))
+        self.web_label()
         self.stats_refresh()
 
     def stats_refresh(self):

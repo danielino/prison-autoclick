@@ -5,7 +5,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm, diagnostic, stats
+from . import llm, diagnostic, stats, live
 
 
 class HuntMixin:
@@ -49,6 +49,7 @@ class HuntMixin:
     # -- auto-hunt: attack the bot at the starting spot, repeat the attack each turn, loot, wait for it to respawn
     def hunt_say(self, text):
         self.msg = "Auto-hunt: " + text
+        live.update(status=text)
         log("HUNT " + text)
 
     def hunt_move(self, h, fx, fy):
@@ -303,6 +304,8 @@ class HuntMixin:
             log("HUNT manual attack: no bot found on the screen")
             return False
         log("HUNT manual attack candidates: %s" % ", ".join("(%.3f,%.3f)" % p for p in cands[:4]))
+        live.update(bots=[{"x": round(c[0], 3), "y": round(c[1], 3), "health": fills.get(c)} for c in cands[:6]], target=0)
+        self.live_target = fills.get(cands[0])
         # the chosen bot first, with the click point that worked last time: the body point under the bar is often not what
         # the game accepts (diamond rooms: the feet are), and a failed click must not send the attack to another bot
         n, c0 = len(self.AIM_VARIANTS), cands[0]
@@ -326,6 +329,7 @@ class HuntMixin:
                 if changed(base, grab_chat(h), min_frac=0.01, tol=40):
                     log("HUNT manual attack at (%.3f,%.3f): done" % p)
                     stats.add("attacks_manual")
+                    live.sample(target=fills.get(c0))
                     log("HUNT ACTION attack #%d by hand: clicked (%.3f,%.3f) on the bot at (%.3f,%.3f), its health %s; bots seen: %s" % (
                         stats.get("attacks_manual"), p[0], p[1], c0[0], c0[1],
                         ("%.0f%%" % (fills[c0] * 100)) if c0 in fills else "?", seen))
@@ -341,6 +345,15 @@ class HuntMixin:
                 c0 = min(near, key=lambda q: (q[0] - c0[0]) ** 2 + (q[1] - c0[1]) ** 2)
         return False
     def hunt_fight(self, h, spot=None):
+        """The fight (see hunt_fight_loop), with its state published for the live web page."""
+        live.fight_start()
+        self.live_target = None
+        try:
+            return self.hunt_fight_loop(h, spot)
+        finally:
+            live.fight_end()
+
+    def hunt_fight_loop(self, h, spot=None):
         """Attack by hand for the first turns (Ctrl+R has nothing to repeat yet), then Ctrl+R on every turn of yours until
         the fight is over (banner gone for 2 s). If Ctrl+R does not pass the turn (e.g. the bot it repeated is dead and a
         second one is in the fight), it starts again with manual attacks. False if stopped/timeout."""
@@ -391,7 +404,10 @@ class HuntMixin:
                 if still_mine and now - last >= max(self.cfg["repeat_interval"], 5.0):
                     hp = read_health(h)
                     log("HUNT health %.0f%% in the fight" % (hp * 100))
+                    live.update(my_health=hp)
+                    live.sample(my=hp, target=getattr(self, "live_target", None))
                     left = read_attacks(h)  # the ATAQUES number of the HUD (None if it cannot be read)
+                    live.update(attacks_left=left)
                     if left is not None:
                         log("HUNT attacks left this turn: %d" % left)
                     elif unread < 2:
@@ -404,11 +420,13 @@ class HuntMixin:
                         # (20 s at most, in case the line cannot be read)
                         if chat_turn_is_mine(h) or now - await_turn >= 20.0:
                             await_turn = None
+                            live.update(turn="mine")
                             # a new turn: the camera may have moved, so the spot of the last hit means nothing; the area
                             # is scanned again and the weakest bot chosen from scratch
                             self.fight_spot = None
                         else:
                             self.hunt_say("waiting for the enemy to finish its turn")
+                            live.update(turn="enemy")
                             last = now - max(self.cfg["repeat_interval"], 5.0) + 1.0
                             continue
                     if left is None and llm.active(self.cfg):
@@ -469,6 +487,7 @@ class HuntMixin:
                         log("HUNT still my turn after the attacks -> Ctrl+T (end turn)")
                         self.hunt_say("my turn: ending it (Ctrl+T)")
                         log("HUNT ACTION Ctrl+T: end the turn")
+                        live.update(turn="enemy")
                         stats.add("end_turns")
                         key_combo(0x1D, 0x14)
                         end_turn = False
@@ -485,6 +504,7 @@ class HuntMixin:
                         held_since = None
                         log("HUNT my turn (buttons %.3f) -> Ctrl+R" % ft)
                         log("HUNT ACTION Ctrl+R: repeat the last turn (same attacks, same targets as that turn)")
+                        live.update(turn="enemy")
                         stats.add("repeats")
                         self.hunt_say("my turn: Ctrl+R")
                         key_combo(0x1D, 0x13)
@@ -868,9 +888,11 @@ class HuntMixin:
         return False
     def w_hunt(self):
         stats.start()
+        live.update(running=True, since=time.time())
         try:
             self.w_hunt_loop()
         finally:
+            live.update(running=False, status="stopped")
             stats.stop()
             log(stats.summary_line())  # the last summary, whatever way the hunt ended
 

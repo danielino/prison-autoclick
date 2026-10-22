@@ -141,3 +141,17 @@ def tick(cfg):
     if now - _last_log >= minutes * 60:
         _last_log = now
         log(summary_line())
+
+
+def as_dict():
+    """The counters as plain data for the web page: seconds, every counter, and the groups with labels and rates."""
+    hours = seconds() / 3600.0
+    groups = []
+    for title, items in GROUPS:
+        part = []
+        for key, label in items:
+            v = value(key)
+            part.append({"key": key, "label": label.strip(), "value": v,
+                         "rate": round(v / hours, 1) if key in RATE and hours > 0.02 else None})
+        groups.append({"title": title, "items": part})
+    return {"seconds": int(seconds()), "running": _since is not None, "groups": groups}

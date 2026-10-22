@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Live web page**: a small web server (standard library, no dependencies, nothing loaded from the internet) on port 8080 with a page that shows in real time what the bot is doing and how the fight is going: status, fight number and time, whose turn it is, attacks left, your health, every bot in the fight with its health bar (the target marked), a health chart of the last minutes, the session counters with per-hour rates, the vision model's agreement and the latest events. The data arrives over Server-Sent Events (/events); /api/state gives the same data as JSON once. It only shows data: nothing in it can control the bot or the game. On this computer only by default; a checkbox in the Stats tab opens it to the network, and the port is a setting.
+
 ## 1.3.0 - 2026-10-22
 
 ### Added

@@ -4,6 +4,8 @@ import sys
 import tempfile
 
 os.environ["AUTOPRISON_HOME"] = tempfile.mkdtemp(prefix="autoprison_test_")
+with open(os.path.join(os.environ["AUTOPRISON_HOME"], "autoprison_data.json"), "w") as f:
+    f.write('{"web_enabled": false}')  # the tests must not open the live page on port 8080
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 

@@ -4,7 +4,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from .config import *
-from . import stats
+from . import stats, webstats
 from .winapi import *
 from .vision import *
 from .minimap import *
@@ -46,6 +46,7 @@ class App(HuntMixin, HealMixin):
         self.hunt_outside = []
         self.home = self.safe_pos = None
         self.gui = Gui(self)
+        webstats.start(self.cfg)  # the live page (if switched on)
 
     def slot_lines(self):
         seqs, names = self.cfg["sequences"], self.cfg["names"]
