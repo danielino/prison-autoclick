@@ -2,7 +2,7 @@
 opinion (which enemy has the least health, how many attacks are left). Everything it says is a hint: the colour detectors
 stay in charge, and any error, timeout or odd answer just means "no hint". Screenshots are sent only to the address the
 user typed in the settings, and only while the option is on."""
-import base64, json, re, struct, urllib.request, zlib
+import base64, json, re, struct, time, urllib.request, zlib
 from .config import log
 from .vision import client_rect, grab
 
@@ -10,6 +10,7 @@ DEFAULT_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3-vl:8b-instruct"
 MAX_FAILS = 3  # consecutive failures after which the helper is left alone until the next start
 _fails = 0
+STATS = {"asks": 0, "ok": 0, "seconds": 0.0, "agree": 0, "differ": 0, "attacks_same": 0, "attacks_differ": 0}
 
 # 3x5 digits for the numbered markers drawn on the screenshot
 FONT = {
@@ -96,12 +97,15 @@ def _url(cfg, path):
     return (cfg.get("ollama_url") or DEFAULT_URL).rstrip("/") + path
 
 
-def ask(cfg, prompt, png):
+def ask(cfg, prompt, png, kind="question"):
     """One question about one image -> the JSON object the model answered (dict), or None. Never raises."""
     global _fails
     body = {"model": cfg.get("ollama_model") or DEFAULT_MODEL, "stream": False, "format": "json",
             "options": {"temperature": 0},
             "messages": [{"role": "user", "content": prompt, "images": [base64.b64encode(png).decode("ascii")]}]}
+    STATS["asks"] += 1
+    t0 = time.time()
+    log("LLM ask [%s]: model %s at %s, image %d KB" % (kind, body["model"], cfg.get("ollama_url") or DEFAULT_URL, len(png) // 1024))
     try:
         req = urllib.request.Request(_url(cfg, "/api/chat"), json.dumps(body).encode("utf8"),
                                      {"Content-Type": "application/json"})
@@ -112,10 +116,13 @@ def ask(cfg, prompt, png):
         if not isinstance(answer, dict):
             raise ValueError("no JSON object in the answer: %r" % text[:80])
         _fails = 0
+        STATS["ok"] += 1
+        STATS["seconds"] += time.time() - t0
+        log("LLM answer in %.1f s: %s" % (time.time() - t0, " ".join(text.split())[:100]))
         return answer
     except Exception as e:
         _fails += 1
-        log("LLM request failed (%d/%d): %s%s" % (_fails, MAX_FAILS, e, "; helper switched off until restart" if _fails >= MAX_FAILS else ""))
+        log("LLM request failed after %.1f s (%d/%d): %s%s" % (time.time() - t0, _fails, MAX_FAILS, e, "; helper switched off until restart" if _fails >= MAX_FAILS else ""))
         return None
 
 
@@ -159,7 +166,7 @@ def fight_advice(cfg, h, points):
     if not active(cfg) or not points:
         return None, None
     points = list(points)[:9]
-    answer = ask(cfg, FIGHT_PROMPT, screen_png(h, cfg, points))
+    answer = ask(cfg, FIGHT_PROMPT, screen_png(h, cfg, points), "weakest bot, %d markers" % len(points))
     if not answer:
         return None, None
     n = _int(answer.get("weakest"), 1, len(points))
@@ -172,7 +179,7 @@ def read_attacks(cfg, h):
     """The ATAQUES digit read by the model from the top left corner, or None."""
     if not active(cfg):
         return None
-    answer = ask(cfg, ATTACKS_PROMPT, screen_png(h, cfg, area=(0.0, 0.0, 0.30, 0.16)))
+    answer = ask(cfg, ATTACKS_PROMPT, screen_png(h, cfg, area=(0.0, 0.0, 0.30, 0.16)), "attacks left")
     left = _int((answer or {}).get("attacks_left"), 0, 5)
     log("LLM reads attacks left: %s" % left)
     return left
@@ -213,8 +220,17 @@ def test_on_screen(cfg, h):
     """Send the top left corner of the game (the HUD) and report what the model reads, and how long it took."""
     import time
     t0 = time.time()
-    answer = ask(cfg, ATTACKS_PROMPT, screen_png(h, cfg, area=(0.0, 0.0, 0.30, 0.16)))
+    answer = ask(cfg, ATTACKS_PROMPT, screen_png(h, cfg, area=(0.0, 0.0, 0.30, 0.16)), "screen test")
     if answer is None:
         return False, "The model did not give a usable answer (see autoprison.log)."
     return True, "Answered in %.1f s: attacks left = %s (the box is empty during the enemy's turn)." % (
         time.time() - t0, answer.get("attacks_left"))
+
+
+def stats_line():
+    """One line for the log: how often the model was asked, how fast, and how often it agreed with the colour detectors."""
+    s = STATS
+    avg = s["seconds"] / s["ok"] if s["ok"] else 0.0
+    return ("LLM stats: %d asked, %d answered (avg %.1f s); weakest bot: agreed with the bars %d, differed %d; "
+            "attacks left: same as the colour reader %d, different %d") % (
+        s["asks"], s["ok"], avg, s["agree"], s["differ"], s["attacks_same"], s["attacks_differ"])

@@ -172,3 +172,29 @@ def test_screen_test_reports_the_answer_and_the_time(server):
     Fake.answer = '{"attacks_left": 2}'
     ok, text = llm.test_on_screen(server, 1)
     assert ok and "attacks left = 2" in text
+
+def test_the_log_shows_what_was_asked_and_a_short_answer(server, monkeypatch):
+    lines = []
+    monkeypatch.setattr(llm, "log", lines.append)
+    Fake.answer = '{"weakest": 2, "attacks_left": 2, "note": "' + "x" * 300 + '"}'
+    llm.fight_advice(server, 1, [(0.2, 0.5), (0.7, 0.5)])
+    ask = [l for l in lines if l.startswith("LLM ask")][0]
+    ans = [l for l in lines if l.startswith("LLM answer")][0]
+    assert "weakest bot, 2 markers" in ask and "model m:1b" in ask and "KB" in ask
+    assert '"weakest": 2' in ans and len(ans) < 160  # a part of the answer, not all of it
+
+
+def test_stats_line_counts_agreement(monkeypatch):
+    monkeypatch.setattr(llm, "STATS", {"asks": 4, "ok": 3, "seconds": 3.0, "agree": 2, "differ": 1,
+                                       "attacks_same": 1, "attacks_differ": 0})
+    line = llm.stats_line()
+    assert "4 asked, 3 answered (avg 1.0 s)" in line and "agreed with the bars 2, differed 1" in line
+
+
+def test_fight_pick_counts_agreement_and_attack_comparison(monkeypatch):
+    monkeypatch.setattr(llm, "STATS", {"asks": 0, "ok": 0, "seconds": 0.0, "agree": 0, "differ": 0,
+                                       "attacks_same": 0, "attacks_differ": 0})
+    monkeypatch.setattr(hunt.llm, "fight_advice", lambda cfg, h, pts: (1, 2))
+    monkeypatch.setattr(hunt, "read_attacks", lambda h: 2)
+    Bot(CFG).llm_pick(1, [(0.3, 0.3), (0.6, 0.3)], {})
+    assert llm.STATS["differ"] == 1 and llm.STATS["attacks_same"] == 1

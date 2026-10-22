@@ -195,17 +195,26 @@ class HuntMixin:
         if len(cands) < 2 or not llm.active(cfg) or (locked and cfg.get("llm_mode") != "decide"):
             return cands  # (a bot already being hit keeps being hit unless the model may decide)
         shown = cands[:6]
-        idx, _ = llm.fight_advice(cfg, h, shown)
+        idx, said = llm.fight_advice(cfg, h, shown)
+        if said is not None:  # how the model's digit compares with the colour reader's (for judging the helper)
+            mine_left = read_attacks(h)
+            if mine_left is not None:
+                llm.STATS["attacks_same" if mine_left == said else "attacks_differ"] += 1
+                log("HUNT attacks left: the model says %d, the colour reader %d" % (said, mine_left))
+        if idx is not None:
+            llm.STATS["agree" if shown[idx] == cands[0] else "differ"] += 1
         if idx is None or shown[idx] == cands[0]:
+            if idx is not None:
+                log("HUNT the vision model agrees with the bars: (%.3f,%.3f)" % cands[0])
             return cands
         pick, mine = shown[idx], cands[0]
         unsure = pick not in fills or mine not in fills or abs(fills[pick] - fills[mine]) < 0.1
         if cfg.get("llm_mode") == "decide" or unsure:
-            log("HUNT the vision model prefers (%.3f,%.3f) to (%.3f,%.3f): %s" % (
-                pick[0], pick[1], mine[0], mine[1], "following it" if unsure else "decide mode"))
+            log("HUNT the vision model prefers (%.3f,%.3f, bar %s) to (%.3f,%.3f, bar %s): %s" % (
+                pick[0], pick[1], (("%.0f%%" % (fills[pick] * 100)) if pick in fills else "?"), mine[0], mine[1], (("%.0f%%" % (fills[mine] * 100)) if mine in fills else "?"), "following it" if unsure else "decide mode"))
             return [pick] + [c for c in cands if c != pick]
-        log("HUNT the vision model prefers (%.3f,%.3f) but the bars are clear: keeping (%.3f,%.3f)" % (
-            pick[0], pick[1], mine[0], mine[1]))
+        log("HUNT the vision model prefers (%.3f,%.3f, bar %s) but the bars are clear: keeping (%.3f,%.3f, bar %s)" % (
+            pick[0], pick[1], (("%.0f%%" % (fills[pick] * 100)) if pick in fills else "?"), mine[0], mine[1], (("%.0f%%" % (fills[mine] * 100)) if mine in fills else "?")))
         return cands
     def hunt_manual_attack(self, h, spot, max_tries=6):
         """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
@@ -432,6 +441,8 @@ class HuntMixin:
             else:
                 gone = gone or now
                 if now - gone >= 2.0:
+                    if llm.STATS["asks"]:
+                        log(llm.stats_line())  # so the log shows how useful the model has been so far
                     return True
             if now - t0 > 900:
                 self.hunt_say("fight longer than 15 min: stopped")

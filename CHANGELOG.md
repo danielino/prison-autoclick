@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Vision helper log**: every request is logged (what was asked, model, image size) and the start of the answer with the time it took; the weakest-bot answer is compared with the bars (with their percentages) and the attacks-left digit with the colour reader's, and a `LLM stats` line at the end of each fight shows how often the model agreed.
 - **Vision tab**: the Ollama settings have their own tab: server address, model list (installed models), Download (does `ollama pull` with a progress bar), mode, timeout, image width, a test of the connection and a test on the game screen. Unchecking the box turns the whole feature off (settings greyed out, nothing is sent anywhere); it is off by default, so a PC that cannot run Ollama needs nothing.
 - **Vision helper (Ollama, optional)**: in the Auto-hunt tab, give the address of an Ollama server (this PC or the network) and a vision model (default `qwen3-vl:8b-instruct`). In fights the screen is sent to it with numbered markers on the bots and it says which has the least health and how many attacks are left. `assist` (default): the colour detectors choose, the model breaks ties or helps when the bars cannot be measured; `decide`: the model wins. Any error or odd answer is just no hint; after 3 failures in a row it is left alone until restart. Off by default; screenshots go only to the address typed in.
 - **Attacks left**: the ATAQUES number of the HUD is read (by shape, no OCR engine). The manual attacks of a turn follow
