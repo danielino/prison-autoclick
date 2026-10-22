@@ -7,6 +7,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
+from . import llm
 
 
 class Gui:
@@ -77,6 +78,10 @@ class Gui:
         self.patrolvar = tk.BooleanVar(value=bool(self.cfg["hunt_patrol"]))
         self.homevar = tk.BooleanVar(value=bool(self.cfg["hunt_home"]))
         self.destroyvar = tk.BooleanVar(value=bool(self.cfg["hunt_destroy_unique"]))
+        self.llmvar = tk.BooleanVar(value=bool(self.cfg.get("llm_enabled")))
+        self.llmurl = tk.StringVar(value=self.cfg.get("ollama_url", llm.DEFAULT_URL))
+        self.llmmodel = tk.StringVar(value=self.cfg.get("ollama_model", llm.DEFAULT_MODEL))
+        self.llmmode = tk.StringVar(value=self.cfg.get("llm_mode", "assist"))
 
         pick = ttk.LabelFrame(tab_hunt, text="Choosing bots")
         pick.pack(fill="x", padx=10, pady=4)
@@ -114,6 +119,29 @@ class Gui:
         ttk.Checkbutton(care, variable=self.destroyvar, command=self.apply, text=(
             "Destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up")).grid(
             row=3, column=0, columnspan=3, padx=8, pady=(6, 8), sticky="w")
+        vis = ttk.LabelFrame(tab_hunt, text="Vision helper (Ollama, optional)")
+        vis.pack(fill="x", padx=10, pady=4)
+        ttk.Checkbutton(vis, variable=self.llmvar, command=self.apply, text=(
+            "Ask an Ollama vision model for a second opinion in fights (which bot is weakest, attacks left). "
+            "Screenshots of the game are sent to the address below.")).grid(
+            row=0, column=0, columnspan=4, padx=8, pady=(6, 2), sticky="w")
+        ttk.Label(vis, text="Server").grid(row=1, column=0, padx=8, sticky="w")
+        eu = ttk.Entry(vis, textvariable=self.llmurl, width=30)
+        eu.grid(row=1, column=1, padx=4, sticky="w")
+        ttk.Label(vis, text="Model").grid(row=1, column=2, padx=(12, 4), sticky="w")
+        em = ttk.Entry(vis, textvariable=self.llmmodel, width=18)
+        em.grid(row=1, column=3, padx=4, sticky="w")
+        for e in (eu, em):
+            e.bind("<KeyRelease>", lambda ev: self.apply())
+        ttk.Label(vis, text="Mode").grid(row=2, column=0, padx=8, pady=(4, 0), sticky="w")
+        cm = ttk.Combobox(vis, textvariable=self.llmmode, values=("assist", "decide"), width=8, state="readonly")
+        cm.grid(row=2, column=1, padx=4, pady=(4, 0), sticky="w")
+        cm.bind("<<ComboboxSelected>>", lambda ev: self.apply())
+        ttk.Button(vis, text="Test connection", command=self.llm_test).grid(row=2, column=2, padx=(12, 4), pady=(4, 0), sticky="w")
+        self.llminfo = ttk.Label(vis, foreground="gray", wraplength=640, justify="left", text=(
+            "assist: the colour detectors choose, the model only breaks ties or helps when the bars cannot be measured. "
+            "decide: the model's choice wins."))
+        self.llminfo.grid(row=3, column=0, columnspan=4, padx=8, pady=(4, 8), sticky="w")
         self.hunt_last = "unset"
         self.hunt_sync()
 
@@ -182,10 +210,19 @@ class Gui:
             self.cfg["hunt_walk"] = bool(self.walkvar.get())
             self.cfg["hunt_home"] = bool(self.homevar.get())
             self.cfg["hunt_patrol"] = bool(self.patrolvar.get())
+            self.cfg["llm_enabled"] = bool(self.llmvar.get())
+            self.cfg["ollama_url"] = self.llmurl.get().strip() or llm.DEFAULT_URL
+            self.cfg["ollama_model"] = self.llmmodel.get().strip() or llm.DEFAULT_MODEL
+            self.cfg["llm_mode"] = self.llmmode.get() if self.llmmode.get() in ("assist", "decide") else "assist"
+            llm.reset()  # a changed address or model gets a fresh start
         except ValueError:
             return  # half-typed value: ignore until it is a number
         save(self.cfg)
 
+    def llm_test(self):
+        self.apply()
+        ok, text = llm.test_connection(self.cfg)
+        self.llminfo.config(text=text, foreground="#1a7f37" if ok else "#b3261e")
     # -- auto-hunt area (the in-game setup, option 7, writes the same cfg value)
     def hunt_sync(self):
         cur = self.cfg.get("hunt_area")
@@ -235,6 +272,29 @@ class Gui:
         self.hunt_sync_now()
 
     def hunt_sync_now(self):
+        vis = ttk.LabelFrame(tab_hunt, text="Vision helper (Ollama, optional)")
+        vis.pack(fill="x", padx=10, pady=4)
+        ttk.Checkbutton(vis, variable=self.llmvar, command=self.apply, text=(
+            "Ask an Ollama vision model for a second opinion in fights (which bot is weakest, attacks left). "
+            "Screenshots of the game are sent to the address below.")).grid(
+            row=0, column=0, columnspan=4, padx=8, pady=(6, 2), sticky="w")
+        ttk.Label(vis, text="Server").grid(row=1, column=0, padx=8, sticky="w")
+        eu = ttk.Entry(vis, textvariable=self.llmurl, width=30)
+        eu.grid(row=1, column=1, padx=4, sticky="w")
+        ttk.Label(vis, text="Model").grid(row=1, column=2, padx=(12, 4), sticky="w")
+        em = ttk.Entry(vis, textvariable=self.llmmodel, width=18)
+        em.grid(row=1, column=3, padx=4, sticky="w")
+        for e in (eu, em):
+            e.bind("<KeyRelease>", lambda ev: self.apply())
+        ttk.Label(vis, text="Mode").grid(row=2, column=0, padx=8, pady=(4, 0), sticky="w")
+        cm = ttk.Combobox(vis, textvariable=self.llmmode, values=("assist", "decide"), width=8, state="readonly")
+        cm.grid(row=2, column=1, padx=4, pady=(4, 0), sticky="w")
+        cm.bind("<<ComboboxSelected>>", lambda ev: self.apply())
+        ttk.Button(vis, text="Test connection", command=self.llm_test).grid(row=2, column=2, padx=(12, 4), pady=(4, 0), sticky="w")
+        self.llminfo = ttk.Label(vis, foreground="gray", wraplength=640, justify="left", text=(
+            "assist: the colour detectors choose, the model only breaks ties or helps when the bars cannot be measured. "
+            "decide: the model's choice wins."))
+        self.llminfo.grid(row=3, column=0, columnspan=4, padx=8, pady=(4, 8), sticky="w")
         self.hunt_last = "unset"
         cur = self.cfg.get("hunt_area")
         self.hunt_last = list(cur) if cur else cur

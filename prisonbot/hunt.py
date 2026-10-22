@@ -5,6 +5,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
+from . import llm
 
 
 class HuntMixin:
@@ -186,6 +187,26 @@ class HuntMixin:
 
     OPENING = 2  # manual attacks (Ctrl+A + click) before Ctrl+R has something to repeat
 
+    def llm_pick(self, h, cands, fills, locked=None):
+        """Second opinion of the vision model (Ollama) on which bot has the least health. It replaces the order found by
+        the colour detectors only when it is switched to "decide", or when the bars cannot tell (not measured, or within
+        10 points of each other). Returns the list of candidates, reordered or not."""
+        cfg = getattr(self, "cfg", None) or {}
+        if len(cands) < 2 or not llm.active(cfg) or (locked and cfg.get("llm_mode") != "decide"):
+            return cands  # (a bot already being hit keeps being hit unless the model may decide)
+        shown = cands[:6]
+        idx, _ = llm.fight_advice(cfg, h, shown)
+        if idx is None or shown[idx] == cands[0]:
+            return cands
+        pick, mine = shown[idx], cands[0]
+        unsure = pick not in fills or mine not in fills or abs(fills[pick] - fills[mine]) < 0.1
+        if cfg.get("llm_mode") == "decide" or unsure:
+            log("HUNT the vision model prefers (%.3f,%.3f) to (%.3f,%.3f): %s" % (
+                pick[0], pick[1], mine[0], mine[1], "following it" if unsure else "decide mode"))
+            return [pick] + [c for c in cands if c != pick]
+        log("HUNT the vision model prefers (%.3f,%.3f) but the bars are clear: keeping (%.3f,%.3f)" % (
+            pick[0], pick[1], mine[0], mine[1]))
+        return cands
     def hunt_manual_attack(self, h, spot, max_tries=6):
         """One manual attack inside the fight: click the bot nearest to `spot` (the second bot of a fight
         stands somewhere else, so the scene is scanned again)."""
@@ -223,6 +244,7 @@ class HuntMixin:
             # the one nearest to the spot of the attack); labels have no health to compare and come after the bars
             ref = spot or (0.5, 0.5)
             cands.sort(key=lambda p: (p not in bars, round(fills.get(p, 1.0) / 0.1), (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2))
+        cands = self.llm_pick(h, cands, fills, locked)
         if not cands and locked:
             log("HUNT manual attack: no bot seen, clicking where the last attack landed")
             cands = [locked]  # the bot hit a moment ago has not gone anywhere; its bar may be hidden by the hit's effects
@@ -331,6 +353,8 @@ class HuntMixin:
                             self.hunt_say("waiting for the enemy to finish its turn")
                             last = now - max(self.cfg["repeat_interval"], 5.0) + 1.0
                             continue
+                    if left is None and llm.active(self.cfg):
+                        left = llm.read_attacks(self.cfg, h)  # the colour reader found no digit: ask the vision model
                     third = (left is not None and left >= 3) or hp < 0.5  # the third attack exists below 50% health
                     if (left is None or left < 3) and manual == total == self.OPENING and hp < 0.5 and not bonus:
                         # no HUD number and below 50% health: a fresh turn has three attacks, do not wait for the
