@@ -9,7 +9,7 @@
 
 ### Fixed
 - **Hurt bots not found in a fight**: the health bar of a damaged bot is mostly dark red, which was not recognised, so
-  no bot was found and nothing was attacked. Both reds of the bar count now.
+  no bot was found and nothing was attacked. Both reds of the bar count now. Bars are also looked for at the very top of the room (a bot standing there has its name and bar at the screen edge).
 - **Stuck in a fight**: when the only candidate of a manual attack does nothing, the click is shifted around it (the same
   points as the opening aim) instead of repeating the same click; after 3 rounds without a working click it sends
   Ctrl+R, after 6 Ctrl+T, so the fight moves on.

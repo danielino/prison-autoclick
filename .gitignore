@@ -5,3 +5,4 @@ dist/
 autoprison_data.json
 autoprison.log
 autoprison.log.*
+snapshots/

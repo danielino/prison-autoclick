@@ -121,3 +121,16 @@ def test_find_bars_sees_a_hurt_bot_whose_bar_is_mostly_dark_red(monkeypatch):
     s.paint(920, 200, 990, 207, (141, 25, 8))  # health lost: dark red (seen on a real screenshot)
     bars = vision.find_bars(0)
     assert len(bars) == 1 and bars[0][0] == pytest.approx(0.4725, abs=0.01)
+
+
+def test_find_bars_sees_a_bot_at_the_very_top_of_the_room(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    s.paint(1000, 40, 1090, 47, (228, 10, 1))  # name and bar above the old scan area (it started at 10% of the height)
+    bars = vision.find_bars(0)
+    assert len(bars) == 1 and bars[0][1] < 0.12
+
+
+def test_find_bars_ignores_the_hud_boxes_top_left(monkeypatch):
+    s = FakeScreen(monkeypatch)
+    s.paint(200, 30, 290, 37, (228, 10, 1))
+    assert vision.find_bars(0) == []

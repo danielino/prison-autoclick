@@ -147,6 +147,9 @@ def find_bots(h):
     return sorted(bots, key=lambda p: (p[0] - 0.5) ** 2 + (p[1] - 0.65) ** 2)
 
 
+# bots standing at the top of the room have their name and bar above LABEL_AREA (right at the screen edge): the bars
+# are looked for all the way up, between the HUD boxes (left) and the portrait (right)
+BAR_AREA = (0.08, 0.0, 0.78, 0.74)
 BAR_DROP = BODY_DROP - 0.027  # the red health bar sits 0.027 of the screen height below the name label
 
 
@@ -159,7 +162,7 @@ def _bar(r, g, b):
 def find_bars(h):
     """Fallback inside a fight, where the name label is drawn in another colour: the red health bars shown under
     every combatant. -> body points (client fractions) of the bars that are not yours, nearest to the centre first."""
-    fx, fy, fw, fh = LABEL_AREA
+    fx, fy, fw, fh = BAR_AREA
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
     buf = grab(x + int(fx * w), y + int(fy * hh), rw, rh)
@@ -191,6 +194,7 @@ def find_bars(h):
         pass
     out = [p for p in out if not any(abs(p[0] - (fx + mx * fw)) < 0.03 and 0 < p[1] - (fy + my * fh) < 0.07
                                      for mx, my in (me or []))]
+    out = [p for p in out if not (p[0] < 0.27 and p[1] < 0.16)]  # the HUD boxes (points, attacks, weapon) top left
     return sorted(((p[0], min(p[1] + BAR_DROP, 0.9)) for p in out), key=lambda p: (p[0] - 0.5) ** 2 + (p[1] - 0.65) ** 2)
 
 
