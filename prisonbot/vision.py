@@ -415,13 +415,83 @@ def turn_line_from_buf(buf, w, hh, client_w):
     return yel >= 40 * client_w / 2000.0 and other < yel / 4
 
 
+CHAT_LINES = (0.0, 0.84, 0.62, 0.145)  # the last six or so chat lines
+
+
+def _yellow(r, g, b):
+    return r >= 215 and g >= 190 and b <= 90 and abs(r - g) <= 60
+
+
+def _chat_green(r, g, b):
+    return g >= 200 and r <= 90 and b <= 120
+
+
+def _chat_blue(r, g, b):
+    return r <= 90 and 100 <= g <= 200 and b >= 215
+
+
+def _chat_white(r, g, b):
+    return min(r, g, b) >= 190 and max(r, g, b) - min(r, g, b) <= 35
+
+
+def chat_owner_from_buf(buf, w, hh, client_w):
+    """Who is acting, from the last chat lines: "mine" if the newest line that is a game message (not another player's
+    chat) is yellow ("El turno es tuyo.", or the yellow answer to a refused command), "theirs" if it is red, green or
+    blue (an attack, the bleeding, a death: the turn is running), None if no such line is in view. Other players' chat
+    lines (white text with a few coloured names) do not count: they used to hide the turn line."""
+    k = client_w / 2000.0
+    rows = []  # per pixel row: [yellow, red, green, blue, white]
+    for y in range(hh):
+        base = y * w * 4
+        c = [0, 0, 0, 0, 0]
+        for x in range(0, w, 2):
+            i = base + x * 4
+            r, g, b = buf[i + 2], buf[i + 1], buf[i]
+            if _yellow(r, g, b):
+                c[0] += 1
+            elif _chat_red(r, g, b):
+                c[1] += 1
+            elif _chat_green(r, g, b):
+                c[2] += 1
+            elif _chat_blue(r, g, b):
+                c[3] += 1
+            elif _chat_white(r, g, b):
+                c[4] += 1
+        rows.append(c)
+    lines, cur, blank = [], None, 0
+    for c in rows:
+        if sum(c) >= 2:
+            if cur is None:
+                cur = [0, 0, 0, 0, 0, 0]
+            for i in range(5):
+                cur[i] += c[i]
+            cur[5] += 1
+            blank = 0
+        else:
+            blank += 1
+            if cur is not None and blank >= max(int(3 * k), 2):
+                lines.append(cur)
+                cur = None
+    if cur is not None:
+        lines.append(cur)
+    for ln in reversed(lines):
+        if ln[5] < max(int(5 * k), 3):
+            continue  # a speck, not a line of text
+        main = max(range(4), key=lambda i: ln[i])
+        text = sum(ln[:5])
+        if ln[main] >= 0.6 * text and ln[main] >= 12 * k * k:
+            return "mine" if main == 0 else "theirs"
+    return None
+
+
 def chat_turn_is_mine(h):
-    """The newest chat line is "El turno es tuyo." : the enemy has finished and nothing of ours has been done yet.
-    Ctrl+R is only accepted then ("No es posible REPETIR el turno ahora" while the enemy plays or after an action)."""
-    fx, fy, fw, fh = CHAT_LINE
+    """It is our turn and nothing of ours has been done in it: the newest game message in the chat is yellow ("El turno
+    es tuyo."). Ctrl+R is only accepted then ("No es posible REPETIR el turno ahora" while the enemy plays or after an
+    action). With no game message in view (a flood of other players' chat) it answers True: waiting would not help."""
+    fx, fy, fw, fh = CHAT_LINES
     x, y, w, hh = client_rect(h)
     rw, rh = int(fw * w), int(fh * hh)
-    return turn_line_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+    return chat_owner_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w) != "theirs"
 
 
 def chat_unique_error(h):

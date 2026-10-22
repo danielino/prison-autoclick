@@ -12,6 +12,7 @@
   Ctrl+R repeats it. Without a readable number it falls back to the health rule (below 50%).
 
 ### Fixed
+- **Waiting 20 s for our turn**: the turn was recognised only if "El turno es tuyo." was the very newest chat line, so another player's chat line (or the yellow "La secuencia de repetición no puede ser ejecutada.") hid it and every turn waited for the timeout. The last six chat lines are read now: the newest game message decides (yellow = ours, red/green/blue = the turn is running) and other players' chat is skipped.
 - **Vision helper timing out**: the first request made Ollama load the model (20+ s) in the middle of a turn, and the connection test never loaded it. The model is now loaded when a hunt starts (and kept in memory for 30 minutes); a fight goes on without the helper until it is ready, and a request waits at most 15 s. `Test on the game screen` reports the loading time apart.
 - **Smaller or larger windows**: the ATAQUES digit reader accepts the drift of the glyph at other sizes (closest digit, clearly closer than the others), name labels and bar checks scale their pixel limits with the window size.
 - **Hurt bots not found in a fight**: the health bar of a damaged bot is mostly dark red, which was not recognised, so
