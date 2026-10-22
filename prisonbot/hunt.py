@@ -240,6 +240,8 @@ class HuntMixin:
         total = self.OPENING  # manual attacks planned in this phase
         mine_t = -99.0
         miss = 0  # manual attack rounds in a row where no click worked
+        held_since = None  # since when Ctrl+R waits for the chat to say it is our turn
+        unread = 0  # snapshots saved of the ATAQUES box while it could not be read
         while True:
             if not self.wait(0.4):
                 return False
@@ -271,7 +273,17 @@ class HuntMixin:
                     left = read_attacks(h)  # the ATAQUES number of the HUD (None if it cannot be read)
                     if left is not None:
                         log("HUNT attacks left this turn: %d" % left)
+                    elif unread < 2:
+                        unread += 1
+                        log("HUNT the ATAQUES number cannot be read: saving a snapshot of the HUD")
+                        snapshot(h, "ataques-unreadable", (0.0, 0.0, 0.30, 0.16))
                     third = left >= 3 if left is not None else hp < 0.5  # the third attack exists below 50% health
+                    if left is None and manual == total == self.OPENING and hp < 0.5 and not bonus:
+                        # no HUD number and below 50% health: a fresh turn has three attacks, do not wait for the
+                        # second one to see it
+                        manual = total = self.OPENING + 1
+                        bonus = rage = True
+                        log("HUNT health below 50%: this turn has three attacks")
                     if manual == 0 and not end_turn and third and not rage:
                         # Ctrl+R repeats the turn we did last, so it would never contain the third attack:
                         # play one turn by hand with three, then repeat that one
@@ -314,7 +326,16 @@ class HuntMixin:
                         self.hunt_say("my turn: ending it (Ctrl+T)")
                         key_combo(0x1D, 0x14)
                         end_turn = False
+                    elif not chat_turn_is_mine(h) and now - (held_since or now) < 15.0:
+                        # the green rings stay on while the enemy plays: Ctrl+R then gets "No es posible REPETIR el turno
+                        # ahora". It is accepted when the newest chat line is "El turno es tuyo." (15 s at most, in case
+                        # the line cannot be read)
+                        held_since = held_since or now
+                        self.hunt_say("waiting for the enemy to finish its turn")
+                        last = now - max(self.cfg["repeat_interval"], 5.0) + 1.0
+                        continue
                     else:
+                        held_since = None
                         log("HUNT my turn (buttons %.3f) -> Ctrl+R" % ft)
                         self.hunt_say("my turn: Ctrl+R")
                         key_combo(0x1D, 0x13)

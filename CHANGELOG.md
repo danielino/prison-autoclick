@@ -13,6 +13,10 @@
 - **Second attack of a turn**: when the bot is not seen any more (its bar hidden by the hit's effects), the click goes to
   where the last attack landed. Ctrl+R is only tried before any action of the turn (the game answers
   "No es posible REPETIR el turno ahora" otherwise); with an attack already done it passes the turn with Ctrl+T.
+- **Ctrl+R too early**: the green rings of the buttons stay on while the enemy plays, so Ctrl+R was sent in the enemy's
+  turn ("No es posible REPETIR el turno ahora"). It now waits for the yellow "El turno es tuyo." as the newest chat line
+  (15 s at most). Below 50% health with no readable ATAQUES number, a fresh turn is played with three attacks at once.
+  If the ATAQUES number cannot be read, a snapshot of the HUD is saved in snapshots/.
 - **Stuck in a fight**: when the only candidate of a manual attack does nothing, the click is shifted around it (the same
   points as the opening aim) instead of repeating the same click; after 3 rounds without a working click it sends
   Ctrl+R, after 6 Ctrl+T, so the fight moves on.

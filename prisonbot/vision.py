@@ -365,6 +365,30 @@ def snapshot(h, name, area=CHAT_LOG):
         log("snapshot failed: %s" % e)
 
 
+def turn_line_from_buf(buf, w, hh, client_w):
+    """True if the grabbed chat line is the yellow "El turno es tuyo." (a short yellow text, nothing red or green)."""
+    yel = other = 0
+    for y in range(hh):
+        base = y * w * 4
+        for x in range(w):
+            i = base + x * 4
+            r, g, b = buf[i + 2], buf[i + 1], buf[i]
+            if r >= 215 and g >= 190 and b <= 90 and abs(r - g) <= 60:
+                yel += 1
+            elif _chat_red(r, g, b) or (g >= 200 and r <= 90 and b <= 120):
+                other += 1
+    return yel >= 40 * client_w / 2000.0 and other < yel / 4
+
+
+def chat_turn_is_mine(h):
+    """The newest chat line is "El turno es tuyo." : the enemy has finished and nothing of ours has been done yet.
+    Ctrl+R is only accepted then ("No es posible REPETIR el turno ahora" while the enemy plays or after an action)."""
+    fx, fy, fw, fh = CHAT_LINE
+    x, y, w, hh = client_rect(h)
+    rw, rh = int(fw * w), int(fh * hh)
+    return turn_line_from_buf(grab(x + int(fx * w), y + int(fy * hh), rw, rh), rw, rh, w)
+
+
 def chat_unique_error(h):
     """True if the newest chat line is a long, fully red message (screenshots: ~2750 red px, 43% of the width wide;
     other players' lines only have a short red name)."""

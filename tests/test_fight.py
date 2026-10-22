@@ -1,4 +1,10 @@
+import pytest
 from prisonbot import hunt
+
+
+@pytest.fixture(autouse=True)
+def turn_line(monkeypatch):
+    monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: True)  # the chat says it is our turn
 
 
 class Fight(hunt.HuntMixin):
@@ -119,3 +125,16 @@ def test_misses_after_an_attack_in_the_turn_pass_it_with_ctrl_t_not_ctrl_r(monke
     assert f.hunt_fight(1)
     ev = "".join(f.events)
     assert ev.startswith("AxxxT")
+
+
+def test_ctrl_r_waits_for_the_chat_to_say_it_is_our_turn(monkeypatch):
+    calls = []
+    monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: calls.append(1) or len(calls) > 2)
+    events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 6 + [None, None, None], hp=0.9)
+    assert events.startswith("AATR") and len(calls) >= 3  # two looks while the enemy was still playing, then it went
+
+
+def test_ctrl_r_is_sent_anyway_when_the_chat_line_is_never_recognised(monkeypatch):
+    monkeypatch.setattr(hunt, "chat_turn_is_mine", lambda h: False)
+    events = run(monkeypatch, [MINE, MINE, MINE, OTHER] + [MINE] * 12 + [None, None, None], hp=0.9)
+    assert events.startswith("AATR")  # after 15 s of waiting

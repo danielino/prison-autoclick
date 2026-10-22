@@ -149,3 +149,13 @@ def test_find_bars_ignores_a_big_red_area(monkeypatch):
     s = FakeScreen(monkeypatch)
     s.paint(1000, 300, 1100, 420, (141, 25, 8))  # red clothes / a tinted body: far too tall for a bar
     assert vision.find_bars(0) == []
+
+
+def test_turn_line_is_the_short_yellow_text(monkeypatch):
+    buf = blank(1200, 40, (30, 30, 30))
+    paint(buf, 1200, 20, 10, 200, 16, (250, 230, 20))  # "El turno es tuyo."
+    assert vision.turn_line_from_buf(buf, 1200, 40, 2000)
+    other = blank(1200, 40, (30, 30, 30))
+    paint(other, 1200, 20, 10, 700, 16, (230, 30, 30))  # an enemy attack line: red
+    assert not vision.turn_line_from_buf(other, 1200, 40, 2000)
+    assert not vision.turn_line_from_buf(blank(1200, 40, (30, 30, 30)), 1200, 40, 2000)
