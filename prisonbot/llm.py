@@ -283,3 +283,27 @@ def stats_line():
     return ("LLM stats: %d asked, %d answered (avg %.1f s); weakest bot: agreed with the bars %d, differed %d; "
             "attacks left: same as the colour reader %d, different %d") % (
         s["asks"], s["ok"], avg, s["agree"], s["differ"], s["attacks_same"], s["attacks_differ"])
+
+
+HOVER_PROMPT = (
+    "This is a crop of a game screen around the mouse pointer (the pointer itself is not drawn). The game may show a text "
+    "label over what is under the pointer: the name of a door, an exit or a zone to go to (often with an arrow), or the "
+    "name of a character or object. Read the label. Answer ONLY with JSON: {\"text\": <the label text, or empty if there "
+    "is none>, \"is_exit\": <true if it names a door, exit, stairs, zone or place you would walk to; false if it names a "
+    "character, a bot or an item>}.")
+
+
+def read_hover(cfg, h, p):
+    """Read the label shown near the pointer at `p` (client fractions): (text, is_exit) or None if the model did not
+    answer. Used before a click in the scene, to be sure it is not a door."""
+    if not active(cfg):
+        return None
+    fx0, fy0 = max(p[0] - 0.16, 0.0), max(p[1] - 0.25, 0.0)
+    area = (fx0, fy0, min(0.32, 1 - fx0), min(0.35, 1 - fy0))
+    answer = ask(cfg, HOVER_PROMPT, screen_png(h, cfg, area=area), "label under the pointer")
+    if not answer:
+        return None
+    text = str(answer.get("text") or "").strip()
+    is_exit = answer.get("is_exit")
+    log("LLM reads the label under the pointer: %r exit=%s" % (text[:60], is_exit))
+    return text, (is_exit is True or str(is_exit).lower() == "true")

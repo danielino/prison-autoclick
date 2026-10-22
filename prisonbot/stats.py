@@ -15,6 +15,7 @@ GROUPS = [
         ("attack_misses", "Attack clicks that did nothing"),
         ("third_attacks", "Third attacks (below 50% health)"),
         ("weaker_switch", "Changed to a weaker bot"),
+        ("clicks_refused", "Clicks not made: a door or exit label was under the pointer"),
     ]),
     ("Turns", [
         ("repeats", "Ctrl+R sent (repeat the last turn)"),

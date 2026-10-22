@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Never click on a door or an exit**: an aim click shifted next to a door sent the character out of the zone ("Entrando a CELDAS DE SEGURIDAD NORESTE..."). Before every click in the scene that is not inside a fight (the opening attack, the re-clicks while chasing a bot, the walk towards a bot) the pointer now rests on the spot without clicking, and the screen is compared with how it looked before: a label that appears near the pointer (the game names doors, exits and objects under it) stops the click (no Ctrl+A either). A walk tries other points on the way; a bot standing at a door is left alone for 3 minutes. With the vision model on, the label is read and a label that names a character or an item (not an exit) lets the click through. Refusals are logged (NOT clicking), counted in the Stats tab and the first ones save a picture of what the game showed (`*-hover-label.png`).
+
 ### Added
 - **Live web page**: a small web server (standard library, no dependencies, nothing loaded from the internet) on port 8080 with a page that shows in real time what the bot is doing and how the fight is going: status, fight number and time, whose turn it is, attacks left, your health, every bot in the fight with its health bar (the target marked), a health chart of the last minutes, the session counters with per-hour rates, the vision model's agreement and the latest events. The data arrives over Server-Sent Events (/events); /api/state gives the same data as JSON once. It only shows data: nothing in it can control the bot or the game. On this computer only by default; a checkbox in the Stats tab opens it to the network, and the port is a setting.
 

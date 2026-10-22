@@ -19,7 +19,7 @@ class Bot(hunt.HuntMixin):
     def hunt_loot_leftover(self, h):
         return False
 
-    def hunt_aim(self, h, spot):
+    def hunt_aim(self, h, spot, lead=None):
         return spot
 
     def hunt_in_combat(self, h):
@@ -42,6 +42,7 @@ def setup(monkeypatch, bot, me, bots=()):
     monkeypatch.setattr(hunt.u32, "SetCursorPos", lambda x, y: None)
     monkeypatch.setattr(hunt.HuntMixin, "hunt_px", staticmethod(lambda h, p: (int(p[0] * 1000), int(p[1] * 1000))))
     monkeypatch.setattr(hunt.HuntMixin, "marked", 0)
+    monkeypatch.setattr(hunt.HuntMixin, "hunt_hover_ok", lambda self, h, p, what="click": True)  # (tested in test_hover.py)
 
 
 def test_a_click_that_makes_nothing_happen_is_given_up_after_two_seconds(monkeypatch):

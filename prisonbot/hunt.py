@@ -72,7 +72,7 @@ class HuntMixin:
     LEAD = 0.2  # seconds between the last look at the bot and the click landing
     MAX_LEAD = 0.07  # never aim further than this (screen fraction) from where the bot was seen
 
-    def hunt_aim(self, h, spot):
+    def hunt_aim(self, h, spot, lead=None):
         """Look at the bot twice and aim ahead of it if it is walking. Returns the point to click."""
         def seen():
             near = [p for p in find_bots(h) if abs(p[0] - spot[0]) < 0.10 and abs(p[1] - spot[1]) < 0.12]
@@ -87,7 +87,8 @@ class HuntMixin:
         if not b:
             return a
         dt = max((t2 + t3) / 2 - (t1 + t2) / 2, 0.05)  # time between the middles of the two scans
-        dx, dy = (b[0] - a[0]) / dt * self.LEAD, (b[1] - a[1]) / dt * self.LEAD
+        lead = self.LEAD if lead is None else lead
+        dx, dy = (b[0] - a[0]) / dt * lead, (b[1] - a[1]) / dt * lead
         d = (dx * dx + dy * dy) ** 0.5
         if d > self.MAX_LEAD:
             dx, dy = dx * self.MAX_LEAD / d, dy * self.MAX_LEAD / d
@@ -102,6 +103,56 @@ class HuntMixin:
     aim_pref = 0  # the variant that worked last time: tried first from then on
     manual_pref = 0  # the same for the manual attacks of a fight
 
+    HOVER_WAIT = 0.35  # seconds the pointer rests on a spot before the label (if any) is looked for
+    hover_shots = 0  # screenshots saved of refused spots (a few, to see what the game showed)
+    attack_refused = False  # the last attack was not made because a door or exit label was under the pointer
+
+    def hunt_hover_label(self, h, p):
+        """Move the pointer to `p` WITHOUT clicking and look for a text label that appears near it: the game names doors,
+        exits and objects under the pointer ("CELDAS DE SEGURIDAD NORESTE" with an arrow). The screen is compared with how
+        it looked before the pointer arrived, so labels that are always on screen (bot names) do not count.
+        -> (label found, number of new white-text pixels)."""
+        x, y, w, hh = client_rect(h)
+        k = w / 2000.0
+        fx0, fy0 = max(p[0] - 0.16, 0.0), max(p[1] - 0.25, 0.0)
+        fw, fh = min(0.32, 1 - fx0), min(0.35, 1 - fy0)
+        rw, rh = int(fw * w), int(fh * hh)
+        gx, gy = x + int(fx0 * w), y + int(fy0 * hh)
+        before = grab(gx, gy, rw, rh)
+        self.hunt_move(h, *p)
+        time.sleep(self.HOVER_WAIT)
+        after = grab(gx, gy, rw, rh)
+        new, lo, hi = 0, rw, 0
+        for j in range(0, rh, 2):
+            base = j * rw * 4
+            for i in range(0, rw, 2):
+                q = base + i * 4
+                if min(after[q], after[q + 1], after[q + 2]) >= 225 and min(before[q], before[q + 1], before[q + 2]) < 200:
+                    new += 1
+                    lo, hi = min(lo, i), max(hi, i)
+        wide = (hi - lo) >= 0.05 * w
+        return (new * 4 >= 150 * k * k and wide), new * 4
+
+    def hunt_hover_ok(self, h, p, what="click"):
+        """True if it is safe to click at `p`: no door/exit label shows when the pointer rests there. With the vision model
+        on, a label that it reads as a character or an item (not an exit) is let through."""
+        found, n = self.hunt_hover_label(h, p)
+        if not found:
+            return True
+        log("HUNT hover check at (%.3f,%.3f): a label appeared (%d new text pixels) before the %s" % (p[0], p[1], n, what))
+        cfg = getattr(self, "cfg", None) or {}
+        said = llm.read_hover(cfg, h, p) if llm.active(cfg) else None
+        if said is not None and said[1] is False and said[0]:
+            log("HUNT the label reads %r: not an exit, going on" % said[0])
+            return True
+        log("HUNT NOT clicking at (%.3f,%.3f): %s" % (p[0], p[1], ("the label reads %r, an exit" % said[0]) if said else
+                                                         "a label (door, exit or object) is under the pointer"))
+        if HuntMixin.hover_shots < 6:
+            HuntMixin.hover_shots += 1
+            snapshot(h, "hover-label", (max(p[0] - 0.16, 0.0), max(p[1] - 0.25, 0.0), 0.32, 0.35))
+        stats.add("clicks_refused")
+        return False
+
     CHASE_EVERY = 3.5  # seconds of walking after a click before the bot is looked for again and clicked again
     attack_quick_miss = False  # the last attack click made nothing happen at all (the character did not even start walking)
     marked = 0  # annotated screenshots saved of failed attacks (a few, to see where the clicks went)
@@ -114,12 +165,18 @@ class HuntMixin:
             if self.hunt_loot_leftover(h):
                 return False  # the window hid the scene: look for the target again
             self.hunt_say("attacking (Ctrl+A + click)")
-            key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
+            self.attack_refused = False
             target = spot
-            spot = self.hunt_aim(h, spot)  # the bots walk around: aim where this one will be when the click lands
+            # the bots walk around: aim where this one will be when the click lands (the check below takes a while too)
+            spot = self.hunt_aim(h, spot, self.LEAD + self.HOVER_WAIT + 0.2)
             dx, dy = self.AIM_VARIANTS[variant % len(self.AIM_VARIANTS)]
             spot = (spot[0] + dx, spot[1] + dy)
             log("HUNT aim variant %d: click at (%.3f,%.3f)" % (variant % len(self.AIM_VARIANTS), spot[0], spot[1]))
+            if not self.hunt_hover_ok(h, spot, "attack"):  # never click on a door or an exit
+                self.attack_refused = True
+                self.attack_quick_miss = True
+                return False
+            key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
             u32.SetCursorPos(*self.hunt_px(h, spot))
             time.sleep(0.05)
             mouse_click("L")
@@ -154,10 +211,13 @@ class HuntMixin:
                     near = [p for p in find_bots(h) if abs(p[0] - target[0]) < 0.22 and abs(p[1] - target[1]) < 0.22]
                     if near:
                         target = min(near, key=lambda p: (p[0] - target[0]) ** 2 + (p[1] - target[1]) ** 2)
-                        key_combo(0x1D, 0x1E)
-                        spot = self.hunt_aim(h, target)
+                        spot = self.hunt_aim(h, target, self.LEAD + self.HOVER_WAIT + 0.2)
                         spot = (spot[0] + dx, spot[1] + dy)
                         rechases += 1
+                        if not self.hunt_hover_ok(h, spot, "new click"):
+                            self.attack_refused = True
+                            break
+                        key_combo(0x1D, 0x1E)
                         log("HUNT chasing: the bot moved, clicking again at (%.3f,%.3f) (%d)" % (spot[0], spot[1], rechases))
                         u32.SetCursorPos(*self.hunt_px(h, spot))
                         time.sleep(0.05)
@@ -185,10 +245,16 @@ class HuntMixin:
             return False
         mx, my = me[0], me[1] + FEET_DROP
         bx, by = bot[0], bot[1] + 0.11  # body point + a bit = the bot's feet
-        px, py = mx + (bx - mx) * 0.6, my + (by - my) * 0.6
-        log("HUNT approach: me=(%.3f,%.3f) bot=(%.3f,%.3f) click=(%.3f,%.3f)" % (mx, my, bx, by, px, py))
         self.hunt_say("moving closer to the bot")
-        self.hunt_move(h, px, min(py, 0.88))
+        for part in (0.6, 0.45, 0.75, 0.3):  # a point on the way; the first one with no door or exit label under it
+            px, py = mx + (bx - mx) * part, min(my + (by - my) * part, 0.88)
+            log("HUNT approach: me=(%.3f,%.3f) bot=(%.3f,%.3f) click=(%.3f,%.3f)" % (mx, my, bx, by, px, py))
+            if self.hunt_hover_ok(h, (px, py), "walk"):
+                break
+        else:
+            log("HUNT approach: every point on the way has a label under it: not walking")
+            return False
+        self.hunt_move(h, px, py)
         mouse_click("L")
         last, still, t0 = me, 0.0, time.time()
         while time.time() - t0 < 8:
@@ -992,8 +1058,9 @@ class HuntMixin:
                 if not self.alive():
                     return
                 self.note_failed_attack(tsig)
-                log("HUNT no fight started at that spot: ignoring it for 30 s")
-                bad.append((target[0], target[1], time.time() + 30))
+                wait_s = 180 if self.attack_refused else 30  # next to a door: leave that bot alone for a while
+                log("HUNT no fight started at that spot: ignoring it for %d s" % wait_s)
+                bad.append((target[0], target[1], time.time() + wait_s))
                 continue
             if not self.hunt_fight(h, (target[0], target[1])):
                 return
