@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Vision helper (Ollama, optional)**: in the Auto-hunt tab, give the address of an Ollama server (this PC or the network) and a vision model (default `qwen3-vl:8b-instruct`). In fights the screen is sent to it with numbered markers on the bots and it says which has the least health and how many attacks are left. `assist` (default): the colour detectors choose, the model breaks ties or helps when the bars cannot be measured; `decide`: the model wins. Any error or odd answer is just no hint; after 3 failures in a row it is left alone until restart. Off by default; screenshots go only to the address typed in.
 - **Attacks left**: the ATAQUES number of the HUD is read (by shape, no OCR engine). The manual attacks of a turn follow
   it (so the third attack is played whenever the game gives it), and a turn showing 3 is played by hand once so that
   Ctrl+R repeats it. Without a readable number it falls back to the health rule (below 50%).
