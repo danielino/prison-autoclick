@@ -18,6 +18,7 @@
   (15 s at most). Below 50% health with no readable ATAQUES number, a fresh turn is played with three attacks at once.
   If the ATAQUES number cannot be read, a snapshot of the HUD is saved in snapshots/.
 - **Attacks skipped after Ctrl+R**: Ctrl+R worked, but 3 s later the bot judged it failed (the green rings stay on) and clicked manual attacks in the enemy's turn. Now the chat decides: if it no longer ends with "El turno es tuyo." the repeat worked and nothing is done until the turn comes back (also after Ctrl+T). The status box no longer covers the ATAQUES number while running.
+- **Two bots in a fight**: both attacks of a turn go to the bot hit first until it dies; before, if its bar was hidden, the other bot's bar won and the attacks were split.
 - **Stuck in a fight**: when the only candidate of a manual attack does nothing, the click is shifted around it (the same
   points as the opening aim) instead of repeating the same click; after 3 rounds without a working click it sends
   Ctrl+R, after 6 Ctrl+T, so the fight moves on.

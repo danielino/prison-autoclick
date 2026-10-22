@@ -201,6 +201,10 @@ class HuntMixin:
                     found.append(p)
             found.sort(key=lambda p: (p[0] - ref[0]) ** 2 + (p[1] - ref[1]) ** 2)
             cands += found
+        if locked:
+            # both attacks of a turn go to the same bot until it dies: whatever was seen near the last hit (bar or
+            # label) comes first, even if its bar is hidden and only the label shows
+            cands.sort(key=lambda p: (p[0] - locked[0]) ** 2 + (p[1] - locked[1]) ** 2)
         if not cands and locked:
             log("HUNT manual attack: no bot seen, clicking where the last attack landed")
             cands = [locked]  # the bot hit a moment ago has not gone anywhere; its bar may be hidden by the hit's effects

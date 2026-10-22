@@ -103,6 +103,15 @@ def test_health_bars_are_tried_before_name_labels(monkeypatch):
     assert b.moves == [(0.2, 0.2)]
 
 
+def test_the_bot_hit_first_stays_the_target_even_if_only_its_label_is_seen(monkeypatch):
+    # the bar of the first bot is hidden, the other bot's bar shows: the label next to the last hit still wins
+    patch(monkeypatch, [(0.53, 0.076)], [(0.472, 0.204)])
+    b = Bot()
+    b.fight_spot = (0.476, 0.192)
+    b.hunt_manual_attack(1, None)
+    assert b.moves == [(0.472, 0.204)]
+
+
 def test_a_shifted_click_is_tried_when_the_lone_bot_is_missed(monkeypatch):
     # one candidate whose centre does nothing (diamond room: the feet are what counts)
     clicks = patch(monkeypatch, [], [(0.42, 0.574)], works=lambda n: n >= 3)
