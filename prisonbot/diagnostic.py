@@ -70,3 +70,25 @@ def save_report(h, cfg):
         f.write("\n".join(lines) + "\n")
     log("diagnostic report saved: %s" % folder)
     return folder
+
+
+def save_marked(h, name, points, max_width=1280):
+    """Save a screenshot of the whole game window with numbered markers at `points` (client fractions) in snapshots/:
+    1 = where the click went, 2 = where the bot was thought to be. For seeing why an attack click missed."""
+    try:
+        from .vision import grab, SNAP_KEEP
+        x, y, w, hh = client_rect(h)
+        rows, w2, h2 = llm.to_rgb(grab(x, y, w, hh), w, hh, max_width)
+        scale = max(2, w2 // 220)
+        for n, (px, py) in enumerate(points, 1):
+            llm.draw_marker(rows, w2, h2, px * w2, py * h2, n, scale)
+        folder = os.path.join(HERE, "snapshots")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "%s-%s.png" % (time.strftime("%Y%m%d-%H%M%S"), name))
+        with open(path, "wb") as f:
+            f.write(llm.png_bytes(rows, w2, h2))
+        for old in sorted(os.listdir(folder))[:-SNAP_KEEP]:
+            os.remove(os.path.join(folder, old))
+        log("snapshot saved: %s" % path)
+    except Exception as e:
+        log("marked snapshot failed: %s" % e)

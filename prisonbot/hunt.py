@@ -101,13 +101,20 @@ class HuntMixin:
     aim_pref = 0  # the variant that worked last time: tried first from then on
     manual_pref = 0  # the same for the manual attacks of a fight
 
+    CHASE_EVERY = 3.5  # seconds of walking after a click before the bot is looked for again and clicked again
+    attack_quick_miss = False  # the last attack click made nothing happen at all (the character did not even start walking)
+    marked = 0  # annotated screenshots saved of failed attacks (a few, to see where the clicks went)
+
     def hunt_attack(self, h, spot, variant=0):
-        """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected."""
+        """Ctrl+A, then click the bot (it may have to walk there first). True once a fight is detected. While the
+        character walks after a bot that keeps moving, the bot is looked for again every few seconds and clicked again."""
+        self.attack_quick_miss = False
         for attempt in (1,):
             if self.hunt_loot_leftover(h):
                 return False  # the window hid the scene: look for the target again
             self.hunt_say("attacking (Ctrl+A + click)")
             key_combo(0x1D, 0x1E)  # Ctrl+A: the cursor becomes the attack pointer
+            target = spot
             spot = self.hunt_aim(h, spot)  # the bots walk around: aim where this one will be when the click lands
             dx, dy = self.AIM_VARIANTS[variant % len(self.AIM_VARIANTS)]
             spot = (spot[0] + dx, spot[1] + dy)
@@ -116,8 +123,10 @@ class HuntMixin:
             time.sleep(0.05)
             mouse_click("L")
             # the character now WALKS to the bot and the fight starts when it arrives: keep waiting while it moves,
-            # give up only when it has stood still for 3 s without a fight (or after 30 s)
+            # give up when it has stood still for 3 s without a fight (1.6 s if it never moved at all: the click hit
+            # nothing) or after 30 s. A bot that walks away is looked for again and clicked again every few seconds.
             t0, best, still, last = time.time(), (0.0, 0.0), 0.0, find_self(h)
+            clicked, moved, rechases = t0, False, 0
             lastm = read_minimap(*grab_minimap(h))[0]  # the minimap arrow also tells whether we are walking
             while time.time() - t0 < 30:
                 if not self.wait(0.4):
@@ -137,12 +146,33 @@ class HuntMixin:
                     still += 0.4
                 else:
                     still = 0.0
+                    moved = True
                 last, lastm = me or last, pm or lastm
-                if still >= 3.0 and time.time() - t0 > 1.5:
+                if moved and still < 0.8 and time.time() - clicked >= self.CHASE_EVERY and rechases < 5:
+                    # still walking after the bot, no fight yet: it has moved on. Look for it near where it was.
+                    near = [p for p in find_bots(h) if abs(p[0] - target[0]) < 0.22 and abs(p[1] - target[1]) < 0.22]
+                    if near:
+                        target = min(near, key=lambda p: (p[0] - target[0]) ** 2 + (p[1] - target[1]) ** 2)
+                        key_combo(0x1D, 0x1E)
+                        spot = self.hunt_aim(h, target)
+                        spot = (spot[0] + dx, spot[1] + dy)
+                        rechases += 1
+                        log("HUNT chasing: the bot moved, clicking again at (%.3f,%.3f) (%d)" % (spot[0], spot[1], rechases))
+                        u32.SetCursorPos(*self.hunt_px(h, spot))
+                        time.sleep(0.05)
+                        mouse_click("L")
+                        clicked = time.time()
+                if still >= (3.0 if moved else 1.6) and time.time() - t0 > 1.5:
                     break
-            log("HUNT attempt %d at (%.3f,%.3f): no fight after %.1f s (best banner %.3f, buttons %.3f)" % (
-                attempt, spot[0], spot[1], time.time() - t0, best[0], best[1]))
+            self.attack_quick_miss = not moved
+            log("HUNT attempt %d at (%.3f,%.3f): no fight after %.1f s (best banner %.3f, buttons %.3f)%s" % (
+                attempt, spot[0], spot[1], time.time() - t0, best[0], best[1],
+                "; the click made nothing happen" if not moved else ""))
             stats.add("opening_failed")
+            if HuntMixin.marked < 8:  # where the click went, and what the game said in the chat (for tuning the aim)
+                HuntMixin.marked += 1
+                diagnostic.save_marked(h, "no-fight", [spot, target])
+                snapshot(h, "no-fight-chat")
         return False
 
     def hunt_approach(self, h, bot):
@@ -182,7 +212,13 @@ class HuntMixin:
                     log("HUNT aim variant %d worked: using it first from now on" % variant)
                 self.aim_pref = variant
                 return True
-            if not self.alive() or step == 3 or not self.hunt_approach(h, bot):
+            if not self.alive() or step == 3:
+                return False
+            if self.attack_quick_miss and step < 2 and find_self(h):
+                # the character did not even start walking: the click hit nothing (the bot moved). Look again and click
+                # again at once instead of walking first; walking closer is for the clicks the game refuses
+                self.hunt_say("click missed the bot: looking again")
+            elif not self.hunt_approach(h, bot):
                 return False
             near = [p for p in find_bots(h) if abs(p[0] - bot[0]) < 0.25 and abs(p[1] - bot[1]) < 0.25]
             bot = min(near, key=lambda p: (p[0] - bot[0]) ** 2 + (p[1] - bot[1]) ** 2) if near else bot
