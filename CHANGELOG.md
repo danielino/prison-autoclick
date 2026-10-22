@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Other screen sizes**: the window size is written to the log at the start of a hunt (with a warning when the shape is not 16:9), shown in the Auto-hunt tab (`Screen size`), and `Save diagnostic report` stores a screenshot of the game window plus what every detector sees in a folder to send to the author. Detector tests now run at 1280x720 up to 3840x2160.
 - **Vision helper log**: every request is logged (what was asked, model, image size) and the start of the answer with the time it took; the weakest-bot answer is compared with the bars (with their percentages) and the attacks-left digit with the colour reader's, and a `LLM stats` line at the end of each fight shows how often the model agreed.
 - **Vision tab**: the Ollama settings have their own tab: server address, model list (installed models), Download (does `ollama pull` with a progress bar), mode, timeout, image width, a test of the connection and a test on the game screen. Unchecking the box turns the whole feature off (settings greyed out, nothing is sent anywhere); it is off by default, so a PC that cannot run Ollama needs nothing.
 - **Vision helper (Ollama, optional)**: in the Auto-hunt tab, give the address of an Ollama server (this PC or the network) and a vision model (default `qwen3-vl:8b-instruct`). In fights the screen is sent to it with numbered markers on the bots and it says which has the least health and how many attacks are left. `assist` (default): the colour detectors choose, the model breaks ties or helps when the bars cannot be measured; `decide`: the model wins. Any error or odd answer is just no hint; after 3 failures in a row it is left alone until restart. Off by default; screenshots go only to the address typed in.
@@ -11,6 +12,7 @@
   Ctrl+R repeats it. Without a readable number it falls back to the health rule (below 50%).
 
 ### Fixed
+- **Smaller or larger windows**: the ATAQUES digit reader accepts the drift of the glyph at other sizes (closest digit, clearly closer than the others), name labels and bar checks scale their pixel limits with the window size.
 - **Hurt bots not found in a fight**: the health bar of a damaged bot is mostly dark red, which was not recognised, so
   no bot was found and nothing was attacked. Both reds of the bar count now. Bars are also looked for at the very top of the room (a bot standing there has its name and bar at the screen edge).
 - **Second attack of a turn**: when the bot is not seen any more (its bar hidden by the hit's effects), the click goes to
@@ -88,5 +90,5 @@
 
 ### Known limits
 - Background mode still moves the real cursor (the game reads it).
-- Calibrated on a 2360x1328 window; other sizes and aspect ratios are untested.
+- Calibrated on a 2360x1328 (16:9) window. Other 16:9 sizes are checked on scaled screenshots and synthetic scenes only; other aspect ratios (16:10, 21:9, 4:3) are untested: use the diagnostic report.
 - The hunt is full automation: check the game rules before using it.

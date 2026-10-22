@@ -7,7 +7,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm
+from . import llm, diagnostic
 
 
 class Gui:
@@ -122,6 +122,12 @@ class Gui:
         ttk.Checkbutton(care, variable=self.destroyvar, command=self.apply, text=(
             "Destroy UNIQUE items we already own (right click, then Yes) so the next one can be picked up")).grid(
             row=3, column=0, columnspan=3, padx=8, pady=(6, 8), sticky="w")
+        scr = ttk.LabelFrame(tab_hunt, text="Screen size")
+        scr.pack(fill="x", padx=10, pady=4)
+        self.sizeinfo = ttk.Label(scr, foreground="gray", wraplength=520, justify="left")
+        self.sizeinfo.grid(row=0, column=0, padx=8, pady=6, sticky="w")
+        ttk.Button(scr, text="Save diagnostic report", command=self.diag_report).grid(row=0, column=1, padx=8, pady=6)
+        self.size_refresh()
         self.build_vision(tab_vision)
         self.hunt_last = "unset"
         self.hunt_sync()
@@ -202,6 +208,42 @@ class Gui:
         except ValueError:
             return  # half-typed value: ignore until it is a number
         save(self.cfg)
+
+    # -- screen size
+    def size_refresh(self):
+        """Show the size of the game window and whether it is the shape the detectors were calibrated on."""
+        try:
+            h = find_game()
+            if not h:
+                self.sizeinfo.config(text="Game window not found.", foreground="gray")
+            else:
+                text, ok = diagnostic.window_info(h)
+                if ok:
+                    self.sizeinfo.config(text=text.capitalize() + ".", foreground="gray")
+                else:
+                    self.sizeinfo.config(foreground="#b3261e", text=(
+                        text.capitalize() + ". This is not the calibrated 16:9 shape: the screen areas may be off. "
+                        "Save a diagnostic report and send the folder to the author."))
+        except Exception as e:
+            self.sizeinfo.config(text="Window size unknown: %s" % e, foreground="gray")
+        self.win.after(3000, self.size_refresh)
+
+    def diag_report(self):
+        h = find_game()
+        if not h:
+            messagebox.showinfo("Diagnostic report", "The game window was not found: start the game first.")
+            return
+        try:
+            folder = diagnostic.save_report(h, self.cfg)
+        except Exception as e:
+            messagebox.showerror("Diagnostic report", "Could not save the report: %s" % e)
+            return
+        messagebox.showinfo("Diagnostic report", "Saved in:\n%s\n\nIt holds a screenshot of the game window and what the "
+                            "detectors see. Nothing is sent anywhere: send the folder yourself." % folder)
+        try:
+            os.startfile(folder)
+        except Exception:
+            pass
 
     # -- vision helper (Ollama)
     def build_vision(self, tab):

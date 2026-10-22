@@ -98,7 +98,7 @@ def find_labels(buf, w, hh, scale, test=None):
                     if b in cells and b not in seen:
                         seen.add(b)
                         stack.append(b)
-        if n >= 14:
+        if n >= max(int(14 * scale * scale), 4):  # label pixels grow with the square of the window size
             out.append((sx / n / w, sy / n / hh, n))
     return out
 
@@ -190,9 +190,10 @@ def find_bars(h):
     def lone(b):  # a bar is a thin rectangle with a dark border: red clothes, a tinted body or damage digits are not
         if not int(3 * w / 2000.0) <= b[1] - b[0] + 1 <= int(0.014 * hh):
             return False
-        for j in (b[0] - 3, b[1] + 3):
+        m, span = max(int(3 * w / 2000.0), 2), max(int(8 * w / 2000.0), 3)  # distances in pixels follow the window size
+        for j in (b[0] - m, b[1] + m):
             if 0 <= j < rh and any(_bar(buf[(j * rw + i) * 4 + 2], buf[(j * rw + i) * 4 + 1], buf[(j * rw + i) * 4])
-                                   for i in range(max(b[2] - 8, 0), min(b[2] + 9, rw))):
+                                   for i in range(max(b[2] - span, 0), min(b[2] + span + 1, rw))):
                 return False
         return True
 
@@ -302,8 +303,12 @@ def attacks_from_buf(buf, w, hh):
     def dist(t):
         return sum(1 for a, b in zip("".join(grid), "".join(t)) if a != b)
     cuts = [(k, g) for k, g in ATTACK_GLYPHS.items()] + ATTACK_VARIANTS
-    d, best = min((dist(g), k) for k, g in cuts)
-    return best if d <= 12 else None  # a shape that matches no digit is not guessed
+    scored = sorted((dist(g), k) for k, g in cuts)
+    d, best = scored[0]
+    other = min((s for s, k in scored if k != best), default=99)  # the closest cut of any other digit
+    # the glyph is drawn smaller or larger in other window sizes, so its shape drifts a little: the best digit must be
+    # reasonably close and clearly closer than every other digit. A shape that matches none is not guessed.
+    return best if d <= 26 and other - d >= 8 else None
 
 
 def read_attacks(h):

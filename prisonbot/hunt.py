@@ -5,7 +5,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm
+from . import llm, diagnostic
 
 
 class HuntMixin:
@@ -816,6 +816,7 @@ class HuntMixin:
         patrol = {}  # state of the patrol tour
         chase = 0  # approach steps towards bots outside the area since the last target
         bad, tried = [], []  # (fx, fy, until): spots where an attack did not start a fight / minimap targets done
+        diagnostic.log_window(h)  # the window size goes to the log (and a warning if it is not 16:9)
         log("HUNT start area=%s gap=%s walk=%s" % (self.cfg["hunt_area"], self.cfg["hunt_gap"], self.cfg["hunt_walk"]))
         zone0 = grab_zone(h)  # the zone name on top: if it changes we died / left the zone
         home = read_minimap(*grab_minimap(h))[0]  # where we started, on the minimap
