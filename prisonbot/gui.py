@@ -7,7 +7,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm, diagnostic
+from . import llm, diagnostic, stats
 
 
 class Gui:
@@ -23,10 +23,11 @@ class Gui:
 
         nb = self.nb = ttk.Notebook(w)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
-        tab_click, tab_hunt, tab_vision, tab_seq = (ttk.Frame(nb) for _ in range(4))
+        tab_click, tab_hunt, tab_vision, tab_stats, tab_seq = (ttk.Frame(nb) for _ in range(5))
         nb.add(tab_click, text="  Autoclick  ")
         nb.add(tab_hunt, text="  Auto-hunt  ")
         nb.add(tab_vision, text="  Vision  ")
+        nb.add(tab_stats, text="  Stats  ")
         nb.add(tab_seq, text="  Sequences  ")
 
         # ---- tab 1: autoclick -------------------------------------------------------------------------------
@@ -85,6 +86,7 @@ class Gui:
         self.llmmode = tk.StringVar(value=self.cfg.get("llm_mode", "assist"))
         self.llmtimeout = tk.StringVar(value="%g" % self.cfg.get("llm_timeout", 20))
         self.llmwidth = tk.StringVar(value=str(int(self.cfg.get("llm_max_width", 1024))))
+        self.statsint = tk.StringVar(value="%g" % self.cfg.get("stats_interval", 5))
 
         pick = ttk.LabelFrame(tab_hunt, text="Choosing bots")
         pick.pack(fill="x", padx=10, pady=4)
@@ -129,6 +131,7 @@ class Gui:
         ttk.Button(scr, text="Save diagnostic report", command=self.diag_report).grid(row=0, column=1, padx=8, pady=6)
         self.size_refresh()
         self.build_vision(tab_vision)
+        self.build_stats(tab_stats)
         self.hunt_last = "unset"
         self.hunt_sync()
 
@@ -197,6 +200,7 @@ class Gui:
             self.cfg["hunt_walk"] = bool(self.walkvar.get())
             self.cfg["hunt_home"] = bool(self.homevar.get())
             self.cfg["hunt_patrol"] = bool(self.patrolvar.get())
+            self.cfg["stats_interval"] = min(max(float(self.statsint.get().replace(",", ".")), 0), 240)
             self.cfg["llm_timeout"] = min(max(float(self.llmtimeout.get().replace(",", ".")), 2), 300)
             self.cfg["llm_max_width"] = int(min(max(float(self.llmwidth.get()), 256), 2048))
             self.cfg["llm_enabled"] = bool(self.llmvar.get())
@@ -211,6 +215,60 @@ class Gui:
         except ValueError:
             return  # half-typed value: ignore until it is a number
         save(self.cfg)
+
+    # -- statistics of the session
+    def build_stats(self, tab):
+        top = ttk.Frame(tab)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        self.statstime = ttk.Label(top, font=("Segoe UI", 11, "bold"))
+        self.statstime.pack(side="left")
+        ttk.Button(top, text="Reset", command=self.stats_reset).pack(side="right")
+        ttk.Button(top, text="Copy", command=self.stats_copy).pack(side="right", padx=(0, 6))
+        box = ttk.Frame(tab)
+        box.pack(fill="both", expand=True, padx=10, pady=4)
+        self.statstree = ttk.Treeview(box, columns=("value", "rate"), selectmode="none", height=20)
+        self.statstree.heading("#0", text="What the bot did")
+        self.statstree.heading("value", text="Total")
+        self.statstree.heading("rate", text="Per hour")
+        self.statstree.column("#0", width=430, anchor="w")
+        self.statstree.column("value", width=110, anchor="center")
+        self.statstree.column("rate", width=110, anchor="center")
+        self.statstree.tag_configure("group", font=("Segoe UI", 9, "bold"), background="#e8e8e8", foreground="#222222")
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.statstree.yview)
+        self.statstree.configure(yscrollcommand=sb.set)
+        self.statstree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        row = ttk.Frame(tab)
+        row.pack(fill="x", padx=10, pady=(4, 10))
+        ttk.Label(row, text="Write this summary to the log every (minutes, 0 = never)").pack(side="left")
+        self.spin(row, self.statsint, 0, 240, 1, 6, self.apply).pack(side="left", padx=8)
+        ttk.Label(row, foreground="gray", text="Counts since the program started (Reset clears them); only hunting time is counted.").pack(side="left", padx=8)
+        self.stats_refresh()
+
+    def stats_refresh(self):
+        try:
+            self.statstime.config(text="Hunting time  " + stats.clock(stats.seconds()))
+            tree = self.statstree
+            tree.delete(*tree.get_children())
+            for title, items in stats.rows():
+                g = tree.insert("", "end", text=title, tags=("group",), open=True)
+                for label, value, rate in items:
+                    tree.insert(g, "end", text=label, values=(value, rate))
+        except Exception:
+            pass
+        self.win.after(1000, self.stats_refresh)
+
+    def stats_reset(self):
+        stats.reset()
+        self.stats_refresh()
+
+    def stats_copy(self):
+        lines = [stats.summary_line(), ""]
+        for title, items in stats.rows():
+            lines.append(title)
+            lines += ["  %s: %s%s" % (a, b, ("  (%s per hour)" % c) if c else "") for a, b, c in items]
+        self.win.clipboard_clear()
+        self.win.clipboard_append("\n".join(lines))
 
     # -- screen size
     def size_refresh(self):

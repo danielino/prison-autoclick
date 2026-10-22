@@ -5,7 +5,7 @@ from .config import *
 from .winapi import *
 from .vision import *
 from .minimap import *
-from . import llm, diagnostic
+from . import llm, diagnostic, stats
 
 
 class HuntMixin:
@@ -126,6 +126,8 @@ class HuntMixin:
                 best = (max(best[0], fc), max(best[1], ft))
                 if ok:
                     log("HUNT fight detected after %.1f s (banner %.3f, buttons %.3f)" % (time.time() - t0, fc, ft))
+                    log("HUNT ACTION opening attack (Ctrl+A + click) landed on the bot at (%.3f,%.3f)" % spot)
+                    stats.add("fights_started")
                     return True
                 me = find_self(h)
                 pm = read_minimap(*grab_minimap(h))[0]
@@ -140,6 +142,7 @@ class HuntMixin:
                     break
             log("HUNT attempt %d at (%.3f,%.3f): no fight after %.1f s (best banner %.3f, buttons %.3f)" % (
                 attempt, spot[0], spot[1], time.time() - t0, best[0], best[1]))
+            stats.add("opening_failed")
         return False
 
     def hunt_approach(self, h, bot):
@@ -248,6 +251,7 @@ class HuntMixin:
                     log("HUNT a weaker bot at (%.3f,%.3f): %.0f%% against %.0f%%" % (w[0], w[1], fills[w] * 100, fills[cands[0]] * 100))
                     cands.remove(w)
                     cands.insert(0, w)
+                    stats.add("weaker_switch")
         else:
             # a new target: the bar with the least health first (bars within 10% of each other count as equal, then
             # the one nearest to the spot of the attack); labels have no health to compare and come after the bars
@@ -268,6 +272,8 @@ class HuntMixin:
         n, c0 = len(self.AIM_VARIANTS), cands[0]
         order = [(self.manual_pref + k) % n for k in range(n if len(cands) < 2 else 4)]
         steps = [(c0, v) for v in order] + [(c, None) for c in cands[1:3]]
+        seen = ", ".join("(%.3f,%.3f)%s" % (c[0], c[1], (" %.0f%%" % (fills[c] * 100)) if c in fills else "")
+                         for c in cands[:4])
         for k, (c, v) in enumerate(steps[:max_tries]):
             if v is not None:
                 c = c0  # the bot may have moved (camera, walking) since the last click: follow it
@@ -283,11 +289,16 @@ class HuntMixin:
                 time.sleep(0.3)
                 if changed(base, grab_chat(h), min_frac=0.01, tol=40):
                     log("HUNT manual attack at (%.3f,%.3f): done" % p)
+                    stats.add("attacks_manual")
+                    log("HUNT ACTION attack #%d by hand: clicked (%.3f,%.3f) on the bot at (%.3f,%.3f), its health %s; bots seen: %s" % (
+                        stats.get("attacks_manual"), p[0], p[1], c0[0], c0[1],
+                        ("%.0f%%" % (fills[c0] * 100)) if c0 in fills else "?", seen))
                     self.fight_spot = p
                     if v is not None:
                         self.manual_pref = v
                     return True
             log("HUNT manual attack at (%.3f,%.3f): nothing happened, trying the next click" % p)
+            stats.add("attack_misses")
             # scan the area again before the next click: the camera or the bot may have moved
             near = [q for q in find_bars(h) if (q[0] - c0[0]) ** 2 + (q[1] - c0[1]) ** 2 < 0.1 ** 2]
             if near:
@@ -328,11 +339,13 @@ class HuntMixin:
                         # the green rings stay on while the repeated attacks and the enemy's turn play: the chat no longer
                         # ends with "El turno es tuyo." so the repeat worked; do nothing until the turn comes back
                         log("HUNT Ctrl+R worked: waiting for my next turn")
+                        stats.add("repeats_ok")
                         await_turn = now
                     else:
                         # still our turn 3 s after Ctrl+R: the game said "La secuencia de repetición no puede ser
                         # ejecutada" (the bot it repeated on is dead and another one is in the fight): attack by hand
                         log("HUNT Ctrl+R did not work: %d manual attacks, then Ctrl+T" % self.OPENING)
+                        stats.add("repeats_failed")
                         snapshot(h, "ctrl-r-failed")  # what the chat says (the game explains why it cannot repeat)
                         manual, end_turn, self.fight_spot, bonus, rage = self.OPENING, False, None, False, False
                         total = self.OPENING  # first bot dead: new target
@@ -392,6 +405,8 @@ class HuntMixin:
                         third_try = bonus and total == self.OPENING + 1 and manual == 1  # the attack that may not exist
                         if self.hunt_manual_attack(h, spot, 2 if third_try else 6):
                             manual -= 1
+                            if third_try:
+                                stats.add("third_attacks")
                             if manual == 0 and hp < 0.5 and not bonus:
                                 manual, bonus, rage, total = 1, True, True, self.OPENING + 1  # third attack below 50%
                                 log("HUNT health below 50%: third attack")
@@ -417,6 +432,8 @@ class HuntMixin:
                     elif end_turn:
                         log("HUNT still my turn after the attacks -> Ctrl+T (end turn)")
                         self.hunt_say("my turn: ending it (Ctrl+T)")
+                        log("HUNT ACTION Ctrl+T: end the turn")
+                        stats.add("end_turns")
                         key_combo(0x1D, 0x14)
                         end_turn = False
                         await_turn = now
@@ -431,6 +448,8 @@ class HuntMixin:
                     else:
                         held_since = None
                         log("HUNT my turn (buttons %.3f) -> Ctrl+R" % ft)
+                        log("HUNT ACTION Ctrl+R: repeat the last turn (same attacks, same targets as that turn)")
+                        stats.add("repeats")
                         self.hunt_say("my turn: Ctrl+R")
                         key_combo(0x1D, 0x13)
                         sent_r = now
@@ -441,6 +460,9 @@ class HuntMixin:
             else:
                 gone = gone or now
                 if now - gone >= 2.0:
+                    stats.add("fights_done")
+                    stats.add("fight_seconds", now - t0)
+                    log("HUNT FIGHT over after %.0f s" % (now - t0))
                     if llm.STATS["asks"]:
                         log(llm.stats_line())  # so the log shows how useful the model has been so far
                     return True
@@ -454,6 +476,7 @@ class HuntMixin:
             if not self.hunt_loot_once(h):
                 return
             log("HUNT loot: window emptied, sending %s again for any other corpse" % self.cfg["loot_command"])
+            stats.add("loot_windows")
             # the game answers "Necesitarás esperar un poco más para repetir eso" to a /loot typed too soon
             if not self.wait(self.cfg.get("loot_again_delay", 3.0)):
                 return
@@ -808,6 +831,14 @@ class HuntMixin:
             player = now_pl
         return False
     def w_hunt(self):
+        stats.start()
+        try:
+            self.w_hunt_loop()
+        finally:
+            stats.stop()
+            log(stats.summary_line())  # the last summary, whatever way the hunt ended
+
+    def w_hunt_loop(self):
         """Find living bots by their name label, attack the nearest isolated one, fight, loot; with the minimap walk
         to the next bot when none is in the area."""
         h = self.game()
@@ -841,6 +872,7 @@ class HuntMixin:
             if hp < self.cfg["hunt_min_health"]:  # a tough bot left us low: do nothing new until we have healed
                 if self.cfg.get("heal_item") and time.time() > getattr(self, "_heal_retry", 0):
                     ate = self.hunt_heal(h)
+                    stats.add("heals" if ate else "heal_failed")
                     if not self.alive():
                         return
                     if not ate:

@@ -4,6 +4,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from .config import *
+from . import stats
 from .winapi import *
 from .vision import *
 from .minimap import *
@@ -269,6 +270,7 @@ class App(HuntMixin, HealMixin):
 
     def wait(self, secs):
         end = time.time() + secs
+        stats.tick(self.cfg)  # the session summary goes to the log every few minutes
         while time.time() < end:
             if not self.alive():
                 return False

@@ -14,9 +14,25 @@ def app():
     a.root.destroy()
 
 
-def test_window_has_four_tabs(app):
+def test_window_tabs(app):
     g = app.gui
-    assert [g.nb.tab(i, "text").strip() for i in range(4)] == ["Autoclick", "Auto-hunt", "Vision", "Sequences"]
+    assert [g.nb.tab(i, "text").strip() for i in range(5)] == ["Autoclick", "Auto-hunt", "Vision", "Stats", "Sequences"]
+
+
+def test_stats_tab_shows_the_counters_and_the_interval_is_saved(app):
+    from prisonbot import stats
+    stats.reset()
+    stats.add("fights_done", 3)
+    g = app.gui
+    g.stats_refresh()
+    texts = [g.statstree.item(i, "text") for i in g.statstree.get_children()]
+    assert "Fights" in texts
+    leaves = [g.statstree.item(c, "values") for i in g.statstree.get_children() for c in g.statstree.get_children(i)]
+    assert any(v[0] == "3" for v in leaves)
+    g.statsint.set("10")
+    g.apply()
+    assert app.cfg["stats_interval"] == 10
+    stats.reset()
 
 
 def test_ollama_settings_are_applied_and_saved(app):
